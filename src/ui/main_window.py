@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QDockWidget, QInputDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QAction, QKeySequence, QUndoStack
+from PyQt6.QtGui import QAction, QKeySequence, QUndoStack, QActionGroup
 
 from src.config.settings import get_settings, get_settings_manager
 from src.config.shortcuts import Shortcuts
@@ -227,6 +227,60 @@ class MainWindow(QMainWindow):
         self.transcribe_action.triggered.connect(self.start_transcription)
         self.transcribe_action.setEnabled(False)
         transcription_menu.addAction(self.transcribe_action)
+        
+        transcription_menu.addSeparator()
+        
+        # Whisper model selection submenu
+        model_menu = transcription_menu.addMenu("Whisper &Model")
+        
+        # Model options with descriptions
+        self.model_actions = {}
+        models = [
+            ("tiny", "Tiny (~75MB) - Fastest, lowest accuracy"),
+            ("base", "Base (~140MB) - Fast, basic accuracy"),
+            ("small", "Small (~460MB) - Good balance"),
+            ("medium", "Medium (~1.5GB) - Better accuracy"),
+            ("large-v3", "Large-v3 (~3GB) - Best accuracy (recommended)")
+        ]
+        
+        model_group = QActionGroup(self)
+        for model_id, description in models:
+            action = QAction(description, self)
+            action.setCheckable(True)
+            action.setData(model_id)
+            action.triggered.connect(lambda checked, m=model_id: self._set_whisper_model(m))
+            model_menu.addAction(action)
+            model_group.addAction(action)
+            self.model_actions[model_id] = action
+            
+            # Check current model
+            if model_id == self.settings.whisper_model:
+                action.setChecked(True)
+        
+        transcription_menu.addSeparator()
+        
+        # Device selection submenu
+        device_menu = transcription_menu.addMenu("&Device")
+        
+        self.device_actions = {}
+        devices = [
+            ("auto", "Auto (GPU if available, else CPU)"),
+            ("cuda", "GPU (CUDA) - Fast, requires NVIDIA GPU"),
+            ("cpu", "CPU Only - Slower, works everywhere")
+        ]
+        
+        device_group = QActionGroup(self)
+        for device_id, description in devices:
+            action = QAction(description, self)
+            action.setCheckable(True)
+            action.setData(device_id)
+            action.triggered.connect(lambda checked, d=device_id: self._set_whisper_device(d))
+            device_menu.addAction(action)
+            device_group.addAction(action)
+            self.device_actions[device_id] = action
+            
+            if device_id == self.settings.whisper_device:
+                action.setChecked(True)
         
         transcription_menu.addSeparator()
         
@@ -857,6 +911,31 @@ class MainWindow(QMainWindow):
             self.is_modified = True
             self._update_window_title()
             logger.info("Metadata updated")
+    
+    def _set_whisper_model(self, model: str):
+        """Set the Whisper model to use for transcription."""
+        self.settings.whisper_model = model
+        self.settings_manager.save()
+        
+        # Update menu checkmarks
+        for model_id, action in self.model_actions.items():
+            action.setChecked(model_id == model)
+        
+        self.status_label.setText(f"Whisper model set to: {model}")
+        logger.info(f"Whisper model changed to: {model}")
+    
+    def _set_whisper_device(self, device: str):
+        """Set the device to use for transcription."""
+        self.settings.whisper_device = device
+        self.settings_manager.save()
+        
+        # Update menu checkmarks
+        for device_id, action in self.device_actions.items():
+            action.setChecked(device_id == device)
+        
+        device_names = {"auto": "Auto", "cuda": "GPU (CUDA)", "cpu": "CPU"}
+        self.status_label.setText(f"Transcription device set to: {device_names.get(device, device)}")
+        logger.info(f"Whisper device changed to: {device}")
     
     def open_vocabulary_manager(self):
         """Open vocabulary manager dialog."""

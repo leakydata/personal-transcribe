@@ -2,23 +2,47 @@
 
 A professional voice transcription application built with Python, featuring GPU-accelerated transcription using OpenAI Whisper, synchronized audio playback, and PDF/DOCX export for legal use.
 
+> **Note**: This project was pair-programmed using [Cursor](https://cursor.sh/) with Claude Opus 4.5 by Anthropic.
+
 ## Features
 
-- **Fast GPU Transcription**: Uses faster-whisper with large-v3 model on NVIDIA GPUs
+- **Whisper Transcription**: Uses faster-whisper with selectable models (tiny to large-v3)
+- **GPU Acceleration**: NVIDIA CUDA support for 10-15x faster transcription
 - **Word-Level Timestamps**: Precise timing for each word with confidence scores
 - **Gap Detection**: Shows when the other party is speaking (gaps in your audio)
 - **Line-by-Line Editing**: Edit transcriptions with synchronized audio playback
 - **Custom Vocabulary**: Add special names and terms for accurate spelling
 - **AI Polishing**: Clean up transcripts using OpenAI, Ollama, or other AI providers
 - **Recording Metadata**: Add case info, participants, and notes for legal proceedings
-- **Multiple Export Formats**: PDF, Word (.docx), SRT subtitles, plain text
+- **Multiple Export Formats**: PDF, Word (.docx), SRT subtitles
+- **Crash Recovery**: Streaming transcription to disk ensures you never lose work
 - **Project Save/Load**: Save your work and continue later
+
+## Whisper Models
+
+Choose the right model for your hardware:
+
+| Model | Size | Speed | Accuracy | Recommended For |
+|-------|------|-------|----------|-----------------|
+| tiny | ~75MB | Fastest | Basic | Quick previews, testing |
+| base | ~140MB | Fast | Fair | Low-end hardware |
+| small | ~460MB | Medium | Good | Balanced performance |
+| medium | ~1.5GB | Slower | Better | Good accuracy without GPU |
+| large-v3 | ~3GB | Slowest | Best | Professional use (GPU recommended) |
+
+Change models via: **Transcription > Whisper Model**
 
 ## Requirements
 
 - Python 3.10+ (3.11 recommended)
 - Windows 10/11 (tested), Linux/macOS (should work)
 - **For GPU acceleration**: NVIDIA GPU with CUDA support
+
+### Hardware Recommendations
+
+- **With GPU (RTX 3060+)**: Use `large-v3` model for best accuracy
+- **Without GPU**: Use `small` or `medium` model for reasonable speed
+- **Low-end PC**: Use `tiny` or `base` model
 
 ## Installation
 
@@ -61,12 +85,14 @@ uv run python main.py
 ## Usage
 
 1. **Open Audio**: File > Open Audio (supports MP3, WAV, M4A, OGG, FLAC)
-2. **Add Metadata**: File > Recording Metadata (optional, for legal use)
-3. **Transcribe**: Click the Transcribe button - watch progress in the dialog
-4. **Edit**: Click any line to edit text, click timestamp to play that segment
-5. **Navigate**: Click/drag on waveform, use arrow keys to skip 5 seconds
-6. **AI Polish**: Edit > AI Features > Polish Transcript (requires API key or Ollama)
-7. **Export**: File > Export to PDF/Word/SRT
+2. **Select Model**: Transcription > Whisper Model (choose based on your hardware)
+3. **Add Metadata**: File > Recording Metadata (optional, for legal use)
+4. **Transcribe**: Click the Transcribe button - watch progress in the dialog
+5. **Edit**: Click any line to edit text, click timestamp to play that segment
+6. **Navigate**: Click/drag on waveform, use arrow keys to skip 5 seconds
+7. **AI Polish**: AI > Polish Transcript (requires API key or Ollama)
+8. **Export**: File > Export to PDF/Word/SRT
+9. **Recover**: File > Recover Transcription (if app crashed during transcription)
 
 ## Keyboard Shortcuts
 
@@ -85,6 +111,19 @@ uv run python main.py
 | AI Polish | `Ctrl+Shift+P` |
 | Recording Metadata | `Ctrl+M` |
 | Toggle Dark Mode | `Ctrl+D` |
+
+## Crash Recovery
+
+PersonalTranscribe automatically saves your work during transcription:
+
+- **Streaming files**: Each segment is saved as it's transcribed
+- **Autosave files**: Complete transcripts saved before UI loading
+
+If the app crashes, use **File > Recover Transcription** to restore your work.
+
+Recovery files are stored in:
+- `%LOCALAPPDATA%\PersonalTranscribe\streaming\` (partial transcriptions)
+- `%LOCALAPPDATA%\PersonalTranscribe\autosave\` (complete transcriptions)
 
 ## Project Structure
 
@@ -112,7 +151,7 @@ To use AI transcript polishing:
 
 1. **OpenAI**: Get an API key from [platform.openai.com](https://platform.openai.com)
 2. **Ollama** (free, local): Install from [ollama.ai](https://ollama.ai), then `ollama pull llama3.2`
-3. Configure in: Edit > AI Features > AI Settings
+3. Configure in: AI > AI Settings
 
 ## Troubleshooting
 
@@ -124,11 +163,20 @@ To use AI transcript polishing:
 ### Transcription is slow
 - MP3 files are converted to WAV automatically (adds ~10 seconds)
 - CPU transcription is ~10x slower than GPU
-- Consider using a smaller model in settings
+- Try a smaller model: Transcription > Whisper Model > Small
 
 ### App crashes on large files
-- The app uses progressive loading for large transcripts
+- Transcription streams to disk - use File > Recover Transcription
+- The app uses simplified display for large transcripts (>100 segments)
 - Check Help > View Log File for error details
+
+## Credits
+
+This project was developed using:
+- [Cursor](https://cursor.sh/) - AI-powered code editor
+- [Claude Opus 4.5](https://www.anthropic.com/) by Anthropic - AI pair programming assistant
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) - Optimized Whisper implementation
+- [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) - GUI framework
 
 ## License
 
