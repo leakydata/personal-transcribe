@@ -7,7 +7,9 @@ from typing import Optional, List
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QStyledItemDelegate, QLineEdit, QAbstractItemView, QLabel,
-    QCheckBox, QFrame, QStyle, QPushButton, QSpinBox, QApplication
+    QCheckBox, QFrame, QStyle, QPushButton, QSpinBox, QApplication,
+    QMenu, QDialog, QDialogButtonBox, QFormLayout, QDoubleSpinBox,
+    QTextEdit, QMessageBox
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, pyqtSignal,
@@ -400,6 +402,10 @@ class TranscriptEditor(QWidget):
         # Connect signals
         self.table_view.clicked.connect(self._on_row_clicked)
         self.model.dataChanged.connect(self._on_data_changed)
+        
+        # Context menu for segment operations
+        self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table_view.customContextMenuRequested.connect(self._show_context_menu)
         
         layout.addWidget(self.table_view)
         
