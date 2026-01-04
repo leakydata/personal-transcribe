@@ -43,13 +43,15 @@ class TranscriptionWorkerV2(QThread):
         audio_path: str,
         vocabulary: list,
         model_size: str = "large-v3",
-        device: str = "auto"
+        device: str = "auto",
+        segment_mode: str = "natural"  # "natural" or "sentence"
     ):
         super().__init__()
         self.audio_path = audio_path
         self.vocabulary = vocabulary
         self.model_size = model_size
         self.device = device
+        self.segment_mode = segment_mode
         self._cancelled = False
         self._model = None  # Keep reference for cleanup
         self._temp_audio_path: Optional[str] = None  # For preprocessed audio
@@ -383,6 +385,24 @@ class TranscriptionWorkerV2(QThread):
             # Stage 6: Run transcription
             self.log_message.emit("Detecting language and running VAD...", "info")
             
+            # Configure VAD parameters based on segment mode
+            if self.segment_mode == "sentence":
+                # Sentence mode: longer segments, only split on significant pauses
+                vad_params = dict(
+                    min_silence_duration_ms=2000,  # Wait 2 seconds of silence before splitting
+                    speech_pad_ms=400,  # More padding around speech
+                    min_speech_duration_ms=500,  # Minimum speech segment length
+                    max_speech_duration_s=60,  # Allow longer segments (up to 60s)
+                )
+                self.log_message.emit("Using SENTENCE mode - longer, more complete segments", "info")
+            else:
+                # Natural mode: shorter segments following audio pauses
+                vad_params = dict(
+                    min_silence_duration_ms=500,
+                    speech_pad_ms=200
+                )
+                self.log_message.emit("Using NATURAL mode - shorter segments", "info")
+            
             start_transcribe = time.time()
             
             segments_generator, info = model.transcribe(
@@ -392,10 +412,7 @@ class TranscriptionWorkerV2(QThread):
                 initial_prompt=initial_prompt,
                 language=None,  # Auto-detect
                 vad_filter=True,
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,
-                    speech_pad_ms=200
-                )
+                vad_parameters=vad_params
             )
             
             audio_duration = info.duration if hasattr(info, 'duration') else 0
@@ -518,6 +535,17 @@ class TranscriptionWorkerV2(QThread):
             self.log_message.emit(f"Transcription completed in {transcribe_time:.1f}s", "success")
             self.log_message.emit(f"Speed: {actual_rtf:.1f}x realtime", "success")
             
+            # Post-process: merge sentence fragments in sentence mode
+            if self.segment_mode == "sentence" and len(transcript_segments) > 1:
+                original_count = len(transcript_segments)
+                transcript_segments = self._merge_sentence_fragments(transcript_segments)
+                merged_count = original_count - len(transcript_segments)
+                if merged_count > 0:
+                    self.log_message.emit(
+                        f"Merged {merged_count} sentence fragments ({original_count} -> {len(transcript_segments)} segments)",
+                        "info"
+                    )
+            
             # Create transcript
             if not audio_duration and transcript_segments:
                 audio_duration = transcript_segments[-1].end_time
@@ -572,6 +600,85 @@ class TranscriptionWorkerV2(QThread):
         
         return "cpu", "int8"
     
+    def _merge_sentence_fragments(self, segments: list) -> list:
+        """
+        Merge sentence fragments into complete sentences.
+        
+        A segment is considered a fragment if it doesn't end with
+        sentence-ending punctuation (. ! ?) and the next segment
+        starts within a short time gap.
+        """
+        from src.models.transcript import Segment, Word
+        import re
+        
+        if len(segments) <= 1:
+            return segments
+        
+        # Sentence-ending punctuation pattern
+        sentence_end_pattern = re.compile(r'[.!?]["\']*$')
+        
+        merged = []
+        i = 0
+        
+        while i < len(segments):
+            current = segments[i]
+            
+            # Check if this segment ends with sentence-ending punctuation
+            text = current.text.strip()
+            ends_with_sentence = bool(sentence_end_pattern.search(text))
+            
+            if ends_with_sentence or i == len(segments) - 1:
+                # Complete sentence or last segment - keep as is
+                merged.append(current)
+                i += 1
+            else:
+                # Fragment - try to merge with next segments
+                merge_count = 0
+                merged_text_parts = [current.text.strip()]
+                merged_words = list(current.words)
+                end_time = current.end_time
+                
+                j = i + 1
+                while j < len(segments):
+                    next_seg = segments[j]
+                    gap = next_seg.start_time - end_time
+                    
+                    # Only merge if gap is small (< 3 seconds)
+                    if gap > 3.0:
+                        break
+                    
+                    merged_text_parts.append(next_seg.text.strip())
+                    merged_words.extend(next_seg.words)
+                    end_time = next_seg.end_time
+                    merge_count += 1
+                    
+                    # Check if merged text now ends with sentence punctuation
+                    combined_text = " ".join(merged_text_parts)
+                    if sentence_end_pattern.search(combined_text):
+                        break
+                    
+                    # Don't merge more than 5 segments at once
+                    if merge_count >= 5:
+                        break
+                    
+                    j += 1
+                
+                # Create merged segment
+                merged_text = " ".join(merged_text_parts)
+                merged_segment = Segment(
+                    id=current.id,
+                    start_time=current.start_time,
+                    end_time=end_time,
+                    text=merged_text,
+                    words=merged_words,
+                    speaker_label=current.speaker_label,
+                    is_bookmarked=current.is_bookmarked
+                )
+                merged.append(merged_segment)
+                i = j + 1
+        
+        return merged
+    
     def _get_model_cache_path(self) -> Optional[Path]:
         """Get the expected model cache path."""
         cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
@@ -597,6 +704,7 @@ class TranscriptionProgressDialog(QDialog):
         vocabulary: list,
         model_size: str = "large-v3",
         device: str = "auto",
+        segment_mode: str = "natural",
         parent=None
     ):
         super().__init__(parent)
@@ -604,6 +712,7 @@ class TranscriptionProgressDialog(QDialog):
         self.vocabulary = vocabulary
         self.model_size = model_size
         self.device = device
+        self.segment_mode = segment_mode
         
         self.worker: Optional[TranscriptionWorkerV2] = None
         self.start_time: Optional[float] = None
@@ -711,7 +820,8 @@ class TranscriptionProgressDialog(QDialog):
             audio_path=self.audio_path,
             vocabulary=self.vocabulary,
             model_size=self.model_size,
-            device=self.device
+            device=self.device,
+            segment_mode=self.segment_mode
         )
         
         self.worker.log_message.connect(self._log)

@@ -284,6 +284,32 @@ class MainWindow(QMainWindow):
         
         transcription_menu.addSeparator()
         
+        # Segment mode submenu
+        segment_mode_menu = transcription_menu.addMenu("Segment Mode")
+        segment_mode_group = QActionGroup(self)
+        segment_mode_group.setExclusive(True)
+        self.segment_mode_actions = {}
+        
+        segment_modes = [
+            ("natural", "Natural (Short Segments)", "Split on brief pauses - more segments"),
+            ("sentence", "Sentence (Complete Sentences)", "Split only on long pauses - fewer, complete segments")
+        ]
+        
+        for mode_id, mode_name, mode_tip in segment_modes:
+            action = QAction(mode_name, self)
+            action.setStatusTip(mode_tip)
+            action.setCheckable(True)
+            action.setData(mode_id)
+            action.triggered.connect(lambda checked, m=mode_id: self._set_segment_mode(m))
+            segment_mode_menu.addAction(action)
+            segment_mode_group.addAction(action)
+            self.segment_mode_actions[mode_id] = action
+            
+            if mode_id == self.settings.whisper_segment_mode:
+                action.setChecked(True)
+        
+        transcription_menu.addSeparator()
+        
         self.vocabulary_action = QAction("&Vocabulary Manager...", self)
         self.vocabulary_action.triggered.connect(self.open_vocabulary_manager)
         transcription_menu.addAction(self.vocabulary_action)
@@ -769,6 +795,7 @@ class MainWindow(QMainWindow):
             vocabulary=self.vocabulary,
             model_size=self.settings.whisper_model,
             device=self.settings.whisper_device,
+            segment_mode=self.settings.whisper_segment_mode,
             parent=self
         )
         
@@ -932,6 +959,19 @@ class MainWindow(QMainWindow):
         # Update menu checkmarks
         for device_id, action in self.device_actions.items():
             action.setChecked(device_id == device)
+    
+    def _set_segment_mode(self, mode: str):
+        """Set the segment mode for transcription."""
+        self.settings.whisper_segment_mode = mode
+        self.settings_manager.save()
+        
+        # Update menu checkmarks
+        for mode_id, action in self.segment_mode_actions.items():
+            action.setChecked(mode_id == mode)
+        
+        mode_desc = "complete sentences" if mode == "sentence" else "natural pauses"
+        self.status_label.setText(f"Segment mode: {mode_desc}")
+        logger.info(f"Segment mode changed to: {mode}")
         
         device_names = {"auto": "Auto", "cuda": "GPU (CUDA)", "cpu": "CPU"}
         self.status_label.setText(f"Transcription device set to: {device_names.get(device, device)}")

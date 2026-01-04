@@ -18,6 +18,7 @@ class Settings:
     whisper_model: str = "large-v3"
     whisper_device: str = "auto"  # auto, cuda, or cpu
     whisper_compute_type: str = "auto"  # auto, float16, int8, int8_float16
+    whisper_segment_mode: str = "natural"  # natural (short segments) or sentence (longer, complete sentences)
     
     # Audio settings
     playback_speed: float = 1.0
