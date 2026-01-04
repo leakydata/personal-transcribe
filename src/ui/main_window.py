@@ -814,43 +814,86 @@ class MainWindow(QMainWindow):
             if autosave_path:
                 logger.info(f"Transcript auto-saved to: {autosave_path}")
             
-            try:
-                logger.info(f"Loading transcript with {transcript.segment_count} segments...")
-                
-                # Load transcript into editor
-                self.transcript_editor.load_transcript(transcript)
-                logger.debug("Transcript loaded into editor")
-                
-                self.save_action.setEnabled(True)
-                self.save_as_action.setEnabled(True)
-                self.export_pdf_action.setEnabled(True)
-                self._enable_edit_actions(True)
-                self.is_modified = True
-                
-                # Update statistics panel
-                self.statistics_panel.set_transcript(transcript)
-                logger.debug("Statistics panel updated")
-                
-                self.status_label.setText(
-                    f"Transcription complete: {transcript.segment_count} segments, "
-                    f"{transcript.word_count} words"
-                )
-                logger.info("Transcript UI update complete")
-                
-            except Exception as e:
-                logger.error(f"Error loading transcript into UI: {e}", exc_info=True)
-                QMessageBox.warning(
-                    self,
-                    "Display Error",
-                    f"The transcript was saved but could not be fully displayed:\n{e}\n\n"
-                    f"Your transcript has been auto-saved to:\n{autosave_path}\n\n"
-                    "You can open this file using File > Open Project."
-                )
-                # Still enable save so user can save properly
-                self.save_action.setEnabled(True)
-                self.save_as_action.setEnabled(True)
+            # Store transcript for delayed loading
+            self._pending_transcript = transcript
+            self._pending_autosave_path = autosave_path
+            
+            # Update status immediately
+            self.status_label.setText(
+                f"Loading transcript: {transcript.segment_count} segments..."
+            )
+            
+            # Use QTimer to delay UI updates - prevents crashes from rapid Qt updates
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, self._load_transcript_delayed)
         else:
             self.status_label.setText("Transcription failed")
+    
+    def _load_transcript_delayed(self):
+        """Load transcript into UI with delay to prevent crashes."""
+        from src.utils.logger import get_logger
+        logger = get_logger("main_window")
+        
+        transcript = getattr(self, '_pending_transcript', None)
+        autosave_path = getattr(self, '_pending_autosave_path', None)
+        
+        if not transcript:
+            return
+        
+        try:
+            logger.info(f"Loading transcript with {transcript.segment_count} segments...")
+            
+            # Process events before heavy UI work
+            QApplication.processEvents()
+            
+            # Load transcript into editor
+            self.transcript_editor.load_transcript(transcript)
+            logger.debug("Transcript loaded into editor")
+            
+            # Process events again
+            QApplication.processEvents()
+            
+            self.save_action.setEnabled(True)
+            self.save_as_action.setEnabled(True)
+            self.export_pdf_action.setEnabled(True)
+            self._enable_edit_actions(True)
+            self.is_modified = True
+            
+            # Delay statistics update
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self._update_statistics_delayed(transcript))
+            
+            self.status_label.setText(
+                f"Transcription complete: {transcript.segment_count} segments, "
+                f"{transcript.word_count} words"
+            )
+            logger.info("Transcript UI update complete")
+            
+        except Exception as e:
+            logger.error(f"Error loading transcript into UI: {e}", exc_info=True)
+            QMessageBox.warning(
+                self,
+                "Display Error",
+                f"The transcript was saved but could not be fully displayed:\n{e}\n\n"
+                f"Your transcript has been auto-saved to:\n{autosave_path}\n\n"
+                "You can open this file using File > Open Project."
+            )
+            # Still enable save so user can save properly
+            self.save_action.setEnabled(True)
+            self.save_as_action.setEnabled(True)
+        finally:
+            # Clean up
+            self._pending_transcript = None
+            self._pending_autosave_path = None
+    
+    def _update_statistics_delayed(self, transcript):
+        """Update statistics panel with delay."""
+        try:
+            self.statistics_panel.set_transcript(transcript)
+        except Exception as e:
+            from src.utils.logger import get_logger
+            logger = get_logger("main_window")
+            logger.error(f"Error updating statistics: {e}", exc_info=True)
     
     def _autosave_transcript(self, transcript: Transcript) -> Optional[str]:
         """Auto-save transcript to a recovery file immediately after transcription.

@@ -577,9 +577,16 @@ class TranscriptEditor(QWidget):
         page_segments = self._full_transcript.segments[start_idx:end_idx]
         page_transcript = Transcript(segments=page_segments)
         
-        # Load into model
+        # Load into model with processEvents to prevent UI freeze
         try:
+            # Process events before model update
+            QApplication.processEvents()
+            
             self.model.set_transcript(page_transcript)
+            
+            # Process events after model update
+            QApplication.processEvents()
+            
             self._update_pagination_controls()
             
             # Scroll to top of page
@@ -785,3 +792,390 @@ class TranscriptEditor(QWidget):
                     except ValueError:
                         pass
         return sorted(list(selected_rows))
+    
+    # ==================== CONTEXT MENU & SEGMENT OPERATIONS ====================
+    
+    def _show_context_menu(self, position):
+        """Show context menu for segment operations."""
+        menu = QMenu(self)
+        
+        selected_rows = self._get_selected_rows()
+        
+        # Merge action (requires 2+ segments selected)
+        merge_action = menu.addAction("Merge Selected Segments")
+        merge_action.setEnabled(len(selected_rows) >= 2)
+        merge_action.triggered.connect(self._merge_selected_segments)
+        
+        menu.addSeparator()
+        
+        # Split action (requires 1 segment selected)
+        split_action = menu.addAction("Split Segment...")
+        split_action.setEnabled(len(selected_rows) == 1)
+        split_action.triggered.connect(self._split_segment)
+        
+        menu.addSeparator()
+        
+        # Insert actions
+        insert_before_action = menu.addAction("Insert Segment Before...")
+        insert_before_action.setEnabled(len(selected_rows) >= 1)
+        insert_before_action.triggered.connect(lambda: self._insert_segment(before=True))
+        
+        insert_after_action = menu.addAction("Insert Segment After...")
+        insert_after_action.setEnabled(len(selected_rows) >= 1)
+        insert_after_action.triggered.connect(lambda: self._insert_segment(before=False))
+        
+        menu.addSeparator()
+        
+        # Delete action
+        delete_action = menu.addAction("Delete Selected Segment(s)")
+        delete_action.setEnabled(len(selected_rows) >= 1)
+        delete_action.triggered.connect(self._delete_selected_segments)
+        
+        menu.exec(self.table_view.viewport().mapToGlobal(position))
+    
+    def _get_selected_rows(self) -> List[int]:
+        """Get list of selected row indices."""
+        rows = set()
+        for index in self.table_view.selectedIndexes():
+            rows.add(index.row())
+        return sorted(list(rows))
+    
+    def _merge_selected_segments(self):
+        """Merge selected segments into one."""
+        transcript = self.get_transcript()
+        if not transcript:
+            return
+        
+        selected_rows = self._get_selected_rows()
+        if len(selected_rows) < 2:
+            return
+        
+        # Get segments to merge (must be in current page view for paginated transcripts)
+        segments_to_merge = []
+        for row in selected_rows:
+            segment = self.model.get_segment_at_row(row)
+            if segment:
+                segments_to_merge.append(segment)
+        
+        if len(segments_to_merge) < 2:
+            return
+        
+        # Sort by start time
+        segments_to_merge.sort(key=lambda s: s.start_time)
+        
+        # Create merged segment
+        merged_text = " ".join(s.text.strip() for s in segments_to_merge)
+        merged_words = []
+        for s in segments_to_merge:
+            merged_words.extend(s.words)
+        
+        merged_segment = Segment(
+            id=segments_to_merge[0].id,
+            start_time=segments_to_merge[0].start_time,
+            end_time=segments_to_merge[-1].end_time,
+            text=merged_text,
+            words=merged_words,
+            speaker_label=segments_to_merge[0].speaker_label,
+            is_bookmarked=any(s.is_bookmarked for s in segments_to_merge)
+        )
+        
+        # Update transcript: remove merged segments, insert new one
+        for segment in segments_to_merge:
+            if segment in transcript.segments:
+                transcript.segments.remove(segment)
+        
+        # Find correct insert position
+        insert_idx = 0
+        for i, seg in enumerate(transcript.segments):
+            if seg.start_time > merged_segment.start_time:
+                insert_idx = i
+                break
+            insert_idx = i + 1
+        
+        transcript.segments.insert(insert_idx, merged_segment)
+        
+        # Refresh display
+        self._refresh_after_edit()
+        self.segment_edited.emit(merged_segment)
+    
+    def _split_segment(self):
+        """Split a segment at a specified time."""
+        selected_rows = self._get_selected_rows()
+        if len(selected_rows) != 1:
+            return
+        
+        segment = self.model.get_segment_at_row(selected_rows[0])
+        if not segment:
+            return
+        
+        # Show split dialog
+        dialog = SplitSegmentDialog(segment, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            split_time = dialog.get_split_time()
+            
+            transcript = self.get_transcript()
+            if not transcript:
+                return
+            
+            # Create two new segments
+            seg1_words = [w for w in segment.words if w.end <= split_time]
+            seg2_words = [w for w in segment.words if w.start >= split_time]
+            
+            # Handle words spanning the split point
+            for w in segment.words:
+                if w.start < split_time < w.end:
+                    # Word spans split - put in first segment
+                    if w not in seg1_words:
+                        seg1_words.append(w)
+            
+            seg1_text = " ".join(w.text for w in seg1_words) if seg1_words else segment.text[:len(segment.text)//2]
+            seg2_text = " ".join(w.text for w in seg2_words) if seg2_words else segment.text[len(segment.text)//2:]
+            
+            import uuid
+            segment1 = Segment(
+                id=segment.id,
+                start_time=segment.start_time,
+                end_time=split_time,
+                text=seg1_text.strip(),
+                words=seg1_words,
+                speaker_label=segment.speaker_label
+            )
+            
+            segment2 = Segment(
+                id=str(uuid.uuid4())[:8],
+                start_time=split_time,
+                end_time=segment.end_time,
+                text=seg2_text.strip(),
+                words=seg2_words,
+                speaker_label=segment.speaker_label
+            )
+            
+            # Replace original with two new segments
+            idx = transcript.segments.index(segment)
+            transcript.segments.remove(segment)
+            transcript.segments.insert(idx, segment1)
+            transcript.segments.insert(idx + 1, segment2)
+            
+            self._refresh_after_edit()
+            self.segment_edited.emit(segment1)
+    
+    def _insert_segment(self, before: bool = True):
+        """Insert a new segment before or after the selected segment."""
+        selected_rows = self._get_selected_rows()
+        if not selected_rows:
+            return
+        
+        ref_row = selected_rows[0] if before else selected_rows[-1]
+        ref_segment = self.model.get_segment_at_row(ref_row)
+        if not ref_segment:
+            return
+        
+        transcript = self.get_transcript()
+        if not transcript:
+            return
+        
+        # Determine time range for new segment
+        ref_idx = transcript.segments.index(ref_segment)
+        
+        if before:
+            # Insert before: time between previous segment and this one
+            if ref_idx > 0:
+                prev_seg = transcript.segments[ref_idx - 1]
+                default_start = prev_seg.end_time
+            else:
+                default_start = 0.0
+            default_end = ref_segment.start_time
+        else:
+            # Insert after: time between this segment and next one
+            default_start = ref_segment.end_time
+            if ref_idx < len(transcript.segments) - 1:
+                next_seg = transcript.segments[ref_idx + 1]
+                default_end = next_seg.start_time
+            else:
+                default_end = default_start + 5.0  # Default 5 seconds
+        
+        # Show insert dialog
+        dialog = InsertSegmentDialog(default_start, default_end, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_text, new_start, new_end = dialog.get_values()
+            
+            import uuid
+            new_segment = Segment(
+                id=str(uuid.uuid4())[:8],
+                start_time=new_start,
+                end_time=new_end,
+                text=new_text,
+                words=[],  # No word-level timestamps for manually added text
+                speaker_label=""
+            )
+            
+            # Insert at correct position
+            insert_idx = ref_idx if before else ref_idx + 1
+            transcript.segments.insert(insert_idx, new_segment)
+            
+            self._refresh_after_edit()
+            self.segment_edited.emit(new_segment)
+    
+    def _delete_selected_segments(self):
+        """Delete selected segments."""
+        transcript = self.get_transcript()
+        if not transcript:
+            return
+        
+        selected_rows = self._get_selected_rows()
+        if not selected_rows:
+            return
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "Delete Segments",
+            f"Delete {len(selected_rows)} segment(s)?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Get segments to delete
+        segments_to_delete = []
+        for row in selected_rows:
+            segment = self.model.get_segment_at_row(row)
+            if segment:
+                segments_to_delete.append(segment)
+        
+        # Remove from transcript
+        for segment in segments_to_delete:
+            if segment in transcript.segments:
+                transcript.segments.remove(segment)
+        
+        self._refresh_after_edit()
+        if segments_to_delete:
+            self.segment_edited.emit(segments_to_delete[0])
+    
+    def _refresh_after_edit(self):
+        """Refresh the display after editing segments."""
+        transcript = self.get_transcript()
+        if transcript:
+            # Update pagination if needed
+            self._full_transcript = transcript
+            segment_count = len(transcript.segments)
+            self._total_pages = max(1, (segment_count + self.SEGMENTS_PER_PAGE - 1) // self.SEGMENTS_PER_PAGE)
+            
+            if self._total_pages > 1:
+                self._show_pagination(True)
+                self._load_page(min(self._current_page, self._total_pages - 1))
+            else:
+                self._show_pagination(False)
+                self.model.set_transcript(transcript)
+            
+            self.segment_count_label.setText(f"{segment_count} segments total")
+
+
+class SplitSegmentDialog(QDialog):
+    """Dialog for splitting a segment at a specific time."""
+    
+    def __init__(self, segment: Segment, parent=None):
+        super().__init__(parent)
+        self.segment = segment
+        self.setWindowTitle("Split Segment")
+        self.setMinimumWidth(350)
+        
+        layout = QVBoxLayout(self)
+        
+        # Info label
+        from src.models.transcript import format_timestamp
+        info_text = (
+            f"Segment: {format_timestamp(segment.start_time)} - {format_timestamp(segment.end_time)}\n"
+            f"Text: {segment.text[:80]}{'...' if len(segment.text) > 80 else ''}"
+        )
+        info_label = QLabel(info_text)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        # Split time input
+        form_layout = QFormLayout()
+        
+        self.split_time_spinbox = QDoubleSpinBox()
+        self.split_time_spinbox.setDecimals(2)
+        self.split_time_spinbox.setSuffix(" sec")
+        self.split_time_spinbox.setMinimum(segment.start_time + 0.1)
+        self.split_time_spinbox.setMaximum(segment.end_time - 0.1)
+        self.split_time_spinbox.setValue((segment.start_time + segment.end_time) / 2)
+        form_layout.addRow("Split at time:", self.split_time_spinbox)
+        
+        layout.addLayout(form_layout)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+    
+    def get_split_time(self) -> float:
+        return self.split_time_spinbox.value()
+
+
+class InsertSegmentDialog(QDialog):
+    """Dialog for inserting a new segment."""
+    
+    def __init__(self, default_start: float, default_end: float, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Insert New Segment")
+        self.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(self)
+        
+        # Time range inputs
+        form_layout = QFormLayout()
+        
+        self.start_spinbox = QDoubleSpinBox()
+        self.start_spinbox.setDecimals(2)
+        self.start_spinbox.setSuffix(" sec")
+        self.start_spinbox.setMinimum(0)
+        self.start_spinbox.setMaximum(99999)
+        self.start_spinbox.setValue(default_start)
+        form_layout.addRow("Start time:", self.start_spinbox)
+        
+        self.end_spinbox = QDoubleSpinBox()
+        self.end_spinbox.setDecimals(2)
+        self.end_spinbox.setSuffix(" sec")
+        self.end_spinbox.setMinimum(0)
+        self.end_spinbox.setMaximum(99999)
+        self.end_spinbox.setValue(default_end)
+        form_layout.addRow("End time:", self.end_spinbox)
+        
+        layout.addLayout(form_layout)
+        
+        # Text input
+        layout.addWidget(QLabel("Transcript text:"))
+        self.text_edit = QTextEdit()
+        self.text_edit.setMaximumHeight(100)
+        self.text_edit.setPlaceholderText("Enter the missing transcript text here...")
+        layout.addWidget(self.text_edit)
+        
+        # Tip
+        tip_label = QLabel(
+            "Tip: Listen to the audio at this time range to transcribe the missing text."
+        )
+        tip_label.setStyleSheet("color: gray; font-style: italic;")
+        tip_label.setWordWrap(True)
+        layout.addWidget(tip_label)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+    
+    def get_values(self) -> tuple:
+        """Return (text, start_time, end_time)."""
+        return (
+            self.text_edit.toPlainText().strip(),
+            self.start_spinbox.value(),
+            self.end_spinbox.value()
+        )
