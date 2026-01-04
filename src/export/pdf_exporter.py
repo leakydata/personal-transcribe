@@ -183,38 +183,64 @@ class PDFExporter(BaseExporter):
             if pdf.get_y() > pdf.h - 30:
                 pdf.add_page()
             
+            # Calculate text height first to know row height
+            pdf.set_font("Helvetica", "", font_size)
+            text_width = col_widths["text"] - 2  # Padding
+            
+            # Calculate how many lines the text will take
+            text = segment.display_text
+            line_height = 6  # Line height for text
+            
+            # Estimate number of lines needed (rough calculation)
+            avg_char_width = pdf.get_string_width("x")
+            chars_per_line = max(1, int(text_width / avg_char_width))
+            num_lines = max(1, (len(text) + chars_per_line - 1) // chars_per_line)
+            
+            # Calculate row height based on text
+            min_row_height = 10  # Minimum height
+            text_height = max(min_row_height, num_lines * line_height + 4)
+            
+            # Save starting position
+            x_start = pdf.get_x()
+            y_start = pdf.get_y()
+            
             # Line number
             if include_line_numbers:
                 pdf.set_font("Helvetica", "", font_size - 1)
                 pdf.set_text_color(120, 120, 120)
-                pdf.cell(col_widths["line"], 8, str(i + 1), border="LB", align="C")
+                pdf.cell(col_widths["line"], text_height, str(i + 1), border="LB", align="C")
             
             # Timestamp
             if include_timestamps:
                 pdf.set_font("Courier", "", font_size - 1)
                 pdf.set_text_color(80, 80, 80)
                 time_str = format_timestamp_range(segment.start_time, segment.end_time)
-                pdf.cell(col_widths["time"], 8, time_str, border="B", align="C")
+                pdf.cell(col_widths["time"], text_height, time_str, border="B", align="C")
             
-            # Text
+            # Text - use multi_cell for wrapping
             pdf.set_font("Helvetica", "", font_size)
             pdf.set_text_color(0, 0, 0)
             
-            # Handle long text with multi_cell
-            x_before = pdf.get_x()
-            y_before = pdf.get_y()
+            x_before_text = pdf.get_x()
+            y_before_text = pdf.get_y()
             
+            # Draw the text cell
             pdf.multi_cell(
                 col_widths["text"],
-                8,
-                segment.display_text,
+                line_height,
+                text,
                 border="BR",
                 new_x="RIGHT",
                 new_y="TOP"
             )
             
-            # Move to next row
-            pdf.set_xy(pdf.l_margin, max(pdf.get_y(), y_before + 8))
+            # Get actual text height used
+            actual_text_height = pdf.get_y() - y_before_text
+            
+            # If text was shorter than calculated, we need to fill remaining space
+            # Move to next row after the taller of calculated or actual height
+            final_row_height = max(text_height, actual_text_height)
+            pdf.set_xy(pdf.l_margin, y_start + final_row_height)
         
         # Certification text
         if certification_text:

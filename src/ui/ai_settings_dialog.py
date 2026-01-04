@@ -68,13 +68,17 @@ class AISettingsDialog(QDialog):
         openai_layout.addRow("API Key:", self.openai_key_edit)
         
         self.openai_model_combo = QComboBox()
+        self.openai_model_combo.setEditable(True)  # Allow typing custom model names
         self.openai_model_combo.addItems([
             "gpt-4o-mini",
             "gpt-4o",
             "gpt-4-turbo",
             "gpt-4",
-            "gpt-3.5-turbo"
+            "gpt-3.5-turbo",
+            "o1-preview",
+            "o1-mini"
         ])
+        self.openai_model_combo.setToolTip("Select a model or type a custom model name")
         openai_layout.addRow("Model:", self.openai_model_combo)
         
         self.tabs.addTab(openai_tab, "OpenAI")
@@ -114,7 +118,9 @@ class AISettingsDialog(QDialog):
         gemini_layout.addRow("API Key:", self.gemini_key_edit)
         
         self.gemini_model_combo = QComboBox()
+        self.gemini_model_combo.setEditable(True)
         self.gemini_model_combo.addItems([
+            "gemini-2.0-flash",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
             "gemini-1.0-pro"
@@ -132,11 +138,13 @@ class AISettingsDialog(QDialog):
         anthropic_layout.addRow("API Key:", self.anthropic_key_edit)
         
         self.anthropic_model_combo = QComboBox()
+        self.anthropic_model_combo.setEditable(True)
         self.anthropic_model_combo.addItems([
-            "claude-3-haiku-20240307",
-            "claude-3-sonnet-20240229",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
             "claude-3-opus-20240229",
-            "claude-3-5-sonnet-20241022"
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307"
         ])
         anthropic_layout.addRow("Model:", self.anthropic_model_combo)
         
@@ -151,9 +159,11 @@ class AISettingsDialog(QDialog):
         deepseek_layout.addRow("API Key:", self.deepseek_key_edit)
         
         self.deepseek_model_combo = QComboBox()
+        self.deepseek_model_combo.setEditable(True)
         self.deepseek_model_combo.addItems([
             "deepseek-chat",
-            "deepseek-coder"
+            "deepseek-coder",
+            "deepseek-reasoner"
         ])
         deepseek_layout.addRow("Model:", self.deepseek_model_combo)
         
