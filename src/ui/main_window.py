@@ -856,7 +856,7 @@ class MainWindow(QMainWindow):
             
             # Create a project and save it
             project = Project(
-                audio_path=self.current_audio_path or "",
+                audio_file=self.current_audio_path or "",
                 transcript=transcript,
                 vocabulary=self.vocabulary,
                 title=f"Auto-saved: {base_name}",
@@ -864,7 +864,7 @@ class MainWindow(QMainWindow):
                 metadata=self.metadata
             )
             
-            ProjectManager.save_project(project, autosave_path)
+            ProjectManager.save(project, autosave_path)
             logger.info(f"Transcript auto-saved: {transcript.segment_count} segments to {autosave_path}")
             
             return autosave_path
