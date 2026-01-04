@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.ptproj
+*.log
+
+# uv
+uv.lock
+
+# Conda
+*.conda
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Audio files (too large for git)
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.flac
+
+# Export outputs
+*.pdf
+exports/
+
+# Local config (may contain API keys)
+ai_config.json

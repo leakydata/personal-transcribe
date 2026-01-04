@@ -1,0 +1,1 @@
+"""PersonalTranscribe - Voice Transcription Application."""
