@@ -10,7 +10,6 @@ from typing import Optional
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
 
 from src.models.transcript import Transcript, format_timestamp, format_timestamp_range
 from src.export.base_exporter import BaseExporter
@@ -90,33 +89,11 @@ class DOCXExporter(BaseExporter):
             
             doc.add_paragraph()  # Spacer
         
-        # Create table for transcript
-        num_cols = 1  # Always have text column
-        if include_line_numbers:
-            num_cols += 1
-        if include_timestamps:
-            num_cols += 1
-        
-        table = doc.add_table(rows=1, cols=num_cols)
-        table.style = 'Table Grid'
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-        
-        # Header row
-        hdr_cells = table.rows[0].cells
-        col_idx = 0
-        
-        if include_line_numbers:
-            hdr_cells[col_idx].text = '#'
-            hdr_cells[col_idx].paragraphs[0].runs[0].bold = True
-            col_idx += 1
-        
-        if include_timestamps:
-            hdr_cells[col_idx].text = 'Time'
-            hdr_cells[col_idx].paragraphs[0].runs[0].bold = True
-            col_idx += 1
-        
-        hdr_cells[col_idx].text = 'Text'
-        hdr_cells[col_idx].paragraphs[0].runs[0].bold = True
+        # SRT-like format: cleaner than tables
+        # Format:
+        #   1.  00:00:01 - 00:00:07
+        #   Text content here...
+        #   (blank line)
         
         # Gap threshold for display
         gap_threshold = 2.0  # Show gaps >= 2 seconds
@@ -133,14 +110,7 @@ class DOCXExporter(BaseExporter):
             
             # Add gap indicator BEFORE segment if significant
             if include_gaps and gap_before >= gap_threshold:
-                gap_row = table.add_row().cells
-                
-                # Merge all cells for gap indicator
-                gap_cell = gap_row[0]
-                for j in range(1, num_cols):
-                    gap_cell = gap_cell.merge(gap_row[j])
-                
-                gap_para = gap_cell.paragraphs[0]
+                gap_para = doc.add_paragraph()
                 gap_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 
                 if gap_before >= 60:
@@ -155,38 +125,35 @@ class DOCXExporter(BaseExporter):
                 gap_run.font.italic = True
                 gap_run.font.color.rgb = RGBColor(70, 130, 180)  # Steel blue
             
-            # Add segment row
-            row_cells = table.add_row().cells
-            col_idx = 0
-            
+            # Add header line: line number and timestamp
+            header_parts = []
             if include_line_numbers:
-                row_cells[col_idx].text = str(i + 1)
-                col_idx += 1
-            
+                header_parts.append(f"{i + 1}.")
             if include_timestamps:
                 time_str = format_timestamp_range(segment.start_time, segment.end_time)
-                time_para = row_cells[col_idx].paragraphs[0]
-                time_run = time_para.add_run(time_str)
-                time_run.font.name = 'Consolas'
-                time_run.font.size = Pt(font_size - 1)
-                time_run.font.color.rgb = RGBColor(100, 100, 100)
-                col_idx += 1
+                header_parts.append(time_str)
             
-            # Text cell
-            text_para = row_cells[col_idx].paragraphs[0]
-            text_para.add_run(segment.display_text)
+            if header_parts:
+                header_para = doc.add_paragraph()
+                header_run = header_para.add_run("  ".join(header_parts))
+                header_run.font.name = 'Consolas'
+                header_run.font.size = Pt(font_size - 1)
+                header_run.font.bold = True
+                header_run.font.color.rgb = RGBColor(100, 100, 100)
+                # Reduce spacing after header
+                header_para.paragraph_format.space_after = Pt(2)
             
-            # Mark bookmarked segments
+            # Add segment text
+            text_para = doc.add_paragraph()
+            text_run = text_para.add_run(segment.display_text)
+            text_run.font.size = Pt(font_size)
+            
+            # Mark bookmarked segments with yellow highlight
             if segment.is_bookmarked:
-                for run in text_para.runs:
-                    run.font.highlight_color = 6  # Yellow highlight
-        
-        # Set column widths
-        if include_line_numbers:
-            table.columns[0].width = Inches(0.4)
-        if include_timestamps:
-            col_idx = 1 if include_line_numbers else 0
-            table.columns[col_idx].width = Inches(1.5)
+                text_run.font.highlight_color = 6  # Yellow highlight
+            
+            # Add spacing between segments
+            text_para.paragraph_format.space_after = Pt(8)
         
         # Certification text
         if certification_text:

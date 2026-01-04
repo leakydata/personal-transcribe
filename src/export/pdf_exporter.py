@@ -123,30 +123,19 @@ class PDFExporter(BaseExporter):
             
             pdf.ln(10)
         
-        # Table header
-        pdf.set_font("Helvetica", "B", font_size)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.set_text_color(0, 0, 0)
+        # SRT-like format: cleaner, no table alignment issues
+        # Format:
+        #   1. 00:00:01 - 00:00:07
+        #   Text content here...
+        #   (blank line)
         
-        col_widths = self._calculate_column_widths(
-            pdf.w - 20,  # Page width minus margins
-            include_line_numbers,
-            include_timestamps
-        )
-        
-        # Header row
-        if include_line_numbers:
-            pdf.cell(col_widths["line"], 8, "#", border=1, fill=True, align="C")
-        if include_timestamps:
-            pdf.cell(col_widths["time"], 8, "Time", border=1, fill=True, align="C")
-        pdf.cell(col_widths["text"], 8, "Text", border=1, fill=True)
-        pdf.ln()
-        
-        # Transcript content
         pdf.set_font("Helvetica", "", font_size)
+        pdf.set_text_color(0, 0, 0)
         
         # Gap threshold for display
         gap_threshold = 2.0  # Show gaps >= 2 seconds
+        page_width = pdf.w - 20  # Available width
+        line_height = 5  # Line height for text
         
         for i, segment in enumerate(transcript.segments):
             # Calculate gap before this segment
@@ -162,8 +151,7 @@ class PDFExporter(BaseExporter):
                 if pdf.get_y() > pdf.h - 40:
                     pdf.add_page()
                 
-                pdf.set_font("Helvetica", "B", font_size - 1)
-                pdf.set_fill_color(230, 243, 255)  # Light blue background
+                pdf.set_font("Helvetica", "BI", font_size - 1)
                 pdf.set_text_color(70, 130, 180)   # Steel blue text
                 
                 if gap_before >= 60:
@@ -173,74 +161,39 @@ class PDFExporter(BaseExporter):
                 else:
                     gap_text = f"[ PAUSE: {gap_before:.0f} seconds - Other party speaking / Silence ]"
                 
-                total_width = sum(col_widths.values())
-                pdf.cell(total_width, 7, gap_text, align="C", fill=True)
-                pdf.ln(8)
+                pdf.cell(page_width, 8, gap_text, align="C")
+                pdf.ln(10)
                 
                 pdf.set_text_color(0, 0, 0)
             
-            # Check if we need a new page
-            if pdf.get_y() > pdf.h - 30:
+            # Check if we need a new page (need room for header + some text)
+            if pdf.get_y() > pdf.h - 35:
                 pdf.add_page()
             
-            # Calculate text height first to know row height
-            pdf.set_font("Helvetica", "", font_size)
-            text_width = col_widths["text"] - 2  # Padding
-            
-            # Calculate how many lines the text will take
-            text = segment.display_text
-            line_height = 6  # Line height for text
-            
-            # Estimate number of lines needed (rough calculation)
-            avg_char_width = pdf.get_string_width("x")
-            chars_per_line = max(1, int(text_width / avg_char_width))
-            num_lines = max(1, (len(text) + chars_per_line - 1) // chars_per_line)
-            
-            # Calculate row height based on text
-            min_row_height = 10  # Minimum height
-            text_height = max(min_row_height, num_lines * line_height + 4)
-            
-            # Save starting position
-            x_start = pdf.get_x()
-            y_start = pdf.get_y()
-            
-            # Line number
+            # Segment header: line number and timestamp
+            header_parts = []
             if include_line_numbers:
-                pdf.set_font("Helvetica", "", font_size - 1)
-                pdf.set_text_color(120, 120, 120)
-                pdf.cell(col_widths["line"], text_height, str(i + 1), border="LB", align="C")
-            
-            # Timestamp
+                header_parts.append(f"{i + 1}.")
             if include_timestamps:
-                pdf.set_font("Courier", "", font_size - 1)
-                pdf.set_text_color(80, 80, 80)
                 time_str = format_timestamp_range(segment.start_time, segment.end_time)
-                pdf.cell(col_widths["time"], text_height, time_str, border="B", align="C")
+                header_parts.append(time_str)
             
-            # Text - use multi_cell for wrapping
+            if header_parts:
+                pdf.set_font("Courier", "B", font_size - 1)
+                pdf.set_text_color(80, 80, 80)
+                header_text = "  ".join(header_parts)
+                pdf.cell(page_width, 6, header_text)
+                pdf.ln()
+            
+            # Segment text
             pdf.set_font("Helvetica", "", font_size)
             pdf.set_text_color(0, 0, 0)
             
-            x_before_text = pdf.get_x()
-            y_before_text = pdf.get_y()
+            text = segment.display_text
+            pdf.multi_cell(page_width, line_height, text)
             
-            # Draw the text cell
-            pdf.multi_cell(
-                col_widths["text"],
-                line_height,
-                text,
-                border="BR",
-                new_x="RIGHT",
-                new_y="TOP"
-            )
-            
-            # Get actual text height used
-            actual_text_height = pdf.get_y() - y_before_text
-            
-            # If text was shorter than calculated, we need to fill remaining space
-            # Move to next row after the taller of calculated or actual height
-            final_row_height = max(text_height, actual_text_height)
-            pdf.set_xy(pdf.l_margin, y_start + final_row_height)
+            # Add spacing between segments
+            pdf.ln(3)
         
         # Certification text
         if certification_text:
