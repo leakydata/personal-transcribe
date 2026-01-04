@@ -382,8 +382,12 @@ class TranscriptEditor(QWidget):
         self.table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_view.verticalHeader().setVisible(True)
-        self.table_view.verticalHeader().setDefaultSectionSize(60)
+        self.table_view.verticalHeader().setDefaultSectionSize(80)
+        self.table_view.verticalHeader().setMinimumSectionSize(50)
         self.table_view.setWordWrap(True)
+        
+        # Enable text elide mode for the table
+        self.table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
         
         # Model
         self.model = TranscriptTableModel()
@@ -512,11 +516,12 @@ class TranscriptEditor(QWidget):
             QStyledItemDelegate(self)
         )
         
-        # Use fixed row height (larger for readability/editing)
-        self.table_view.verticalHeader().setDefaultSectionSize(70)
+        # Use larger fixed row height for readability with wrapped text
+        self.table_view.verticalHeader().setDefaultSectionSize(120)
         
-        # Disable word wrap for performance
-        self.table_view.setWordWrap(False)
+        # Keep word wrap enabled for readability
+        self.table_view.setWordWrap(True)
+        self.table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
     
     def _disable_simple_mode(self):
         """Disable simplified display mode (restore rich text)."""
@@ -532,8 +537,9 @@ class TranscriptEditor(QWidget):
         self.table_view.setItemDelegateForColumn(1, self.text_delegate)
         
         # Restore settings
-        self.table_view.verticalHeader().setDefaultSectionSize(60)
+        self.table_view.verticalHeader().setDefaultSectionSize(80)
         self.table_view.setWordWrap(True)
+        self.table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
     
     # ==================== PAGINATION METHODS ====================
     
@@ -588,6 +594,9 @@ class TranscriptEditor(QWidget):
             QApplication.processEvents()
             
             self._update_pagination_controls()
+            
+            # Resize rows to fit wrapped content (only for current page, so it's fast)
+            self.table_view.resizeRowsToContents()
             
             # Scroll to top of page
             if self.model.rowCount() > 0:
