@@ -799,9 +799,29 @@ class MainWindow(QMainWindow):
             parent=self
         )
         
-        self.transcription_dialog.transcription_complete.connect(self._on_transcription_finished)
+        # Store result instead of using signal to avoid race condition with dialog closure
+        result_transcript = None
+        
+        def on_complete(transcript):
+            nonlocal result_transcript
+            result_transcript = transcript
+        
+        self.transcription_dialog.transcription_complete.connect(on_complete)
         self.transcription_dialog.start()
         self.transcription_dialog.exec()
+        
+        # Dialog closed - now safely process the result
+        # Use deleteLater to ensure clean dialog destruction
+        dialog = self.transcription_dialog
+        self.transcription_dialog = None
+        dialog.deleteLater()
+        
+        # Process events to ensure dialog is fully closed
+        QApplication.processEvents()
+        
+        # Now handle the transcription result
+        if result_transcript:
+            self._on_transcription_finished(result_transcript)
     
     def _on_transcription_finished(self, transcript: Transcript):
         """Handle transcription completion."""
@@ -824,8 +844,9 @@ class MainWindow(QMainWindow):
             )
             
             # Use QTimer to delay UI updates - prevents crashes from rapid Qt updates
+            # Increased delay to give Qt's event loop more time to settle
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(100, self._load_transcript_delayed)
+            QTimer.singleShot(500, self._load_transcript_delayed)
         else:
             self.status_label.setText("Transcription failed")
     
@@ -859,9 +880,9 @@ class MainWindow(QMainWindow):
             self._enable_edit_actions(True)
             self.is_modified = True
             
-            # Delay statistics update
+            # Delay statistics update - give Qt more time
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(50, lambda: self._update_statistics_delayed(transcript))
+            QTimer.singleShot(300, lambda: self._update_statistics_delayed(transcript))
             
             self.status_label.setText(
                 f"Transcription complete: {transcript.segment_count} segments, "
@@ -1015,10 +1036,6 @@ class MainWindow(QMainWindow):
         mode_desc = "complete sentences" if mode == "sentence" else "natural pauses"
         self.status_label.setText(f"Segment mode: {mode_desc}")
         logger.info(f"Segment mode changed to: {mode}")
-        
-        device_names = {"auto": "Auto", "cuda": "GPU (CUDA)", "cpu": "CPU"}
-        self.status_label.setText(f"Transcription device set to: {device_names.get(device, device)}")
-        logger.info(f"Whisper device changed to: {device}")
     
     def open_vocabulary_manager(self):
         """Open vocabulary manager dialog."""
