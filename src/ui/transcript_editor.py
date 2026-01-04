@@ -7,7 +7,7 @@ from typing import Optional, List
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QHeaderView,
     QStyledItemDelegate, QLineEdit, QAbstractItemView, QLabel,
-    QCheckBox, QFrame, QStyle
+    QCheckBox, QFrame, QStyle, QPushButton, QSpinBox, QApplication
 )
 from PyQt6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, pyqtSignal,
@@ -169,9 +169,9 @@ class TranscriptTableModel(QAbstractTableModel):
                 return segment.display_text
         
         elif role == Qt.ItemDataRole.BackgroundRole:
-            # Highlight current segment
+            # Highlight current segment - use bright yellow for visibility in all themes
             if segment.id == self.highlighted_segment_id:
-                return QBrush(QColor("#bbdefb"))
+                return QBrush(QColor("#fff176"))  # Bright yellow - readable in light/dark
             # Highlight bookmarked segments
             if segment.is_bookmarked:
                 return QBrush(QColor("#e8f5e9"))
@@ -190,6 +190,9 @@ class TranscriptTableModel(QAbstractTableModel):
                 return font
         
         elif role == Qt.ItemDataRole.ForegroundRole:
+            # CRITICAL: Set dark text color for highlighted segment (readable in any theme)
+            if segment.id == self.highlighted_segment_id:
+                return QBrush(QColor("#212121"))  # Dark text on yellow background
             if col == self.COL_TIME:
                 return QBrush(QColor("#616161"))
         
@@ -354,9 +357,15 @@ class TranscriptEditor(QWidget):
     segment_clicked = pyqtSignal(object)  # Segment
     segment_edited = pyqtSignal(object)   # Segment
     
+    # Pagination settings
+    SEGMENTS_PER_PAGE = 100
+    
     def __init__(self):
         super().__init__()
         self._simple_mode = False  # Whether we're in simplified display mode
+        self._current_page = 0
+        self._total_pages = 1
+        self._full_transcript: Optional[Transcript] = None  # Store full transcript
         self._init_ui()
     
     def _init_ui(self):
@@ -393,12 +402,57 @@ class TranscriptEditor(QWidget):
         self.model.dataChanged.connect(self._on_data_changed)
         
         layout.addWidget(self.table_view)
+        
+        # Pagination controls (hidden by default, shown for large transcripts)
+        self.pagination_frame = QFrame()
+        self.pagination_frame.setObjectName("paginationFrame")
+        pagination_layout = QHBoxLayout(self.pagination_frame)
+        pagination_layout.setContentsMargins(8, 4, 8, 4)
+        
+        self.first_page_btn = QPushButton("<<")
+        self.first_page_btn.setFixedWidth(40)
+        self.first_page_btn.clicked.connect(self._go_first_page)
+        
+        self.prev_page_btn = QPushButton("<")
+        self.prev_page_btn.setFixedWidth(40)
+        self.prev_page_btn.clicked.connect(self._go_prev_page)
+        
+        self.page_label = QLabel("Page 1 of 1")
+        self.page_label.setMinimumWidth(120)
+        
+        self.page_spinbox = QSpinBox()
+        self.page_spinbox.setMinimum(1)
+        self.page_spinbox.setMaximum(1)
+        self.page_spinbox.valueChanged.connect(self._on_page_changed)
+        
+        self.next_page_btn = QPushButton(">")
+        self.next_page_btn.setFixedWidth(40)
+        self.next_page_btn.clicked.connect(self._go_next_page)
+        
+        self.last_page_btn = QPushButton(">>")
+        self.last_page_btn.setFixedWidth(40)
+        self.last_page_btn.clicked.connect(self._go_last_page)
+        
+        self.segment_count_label = QLabel("0 segments")
+        
+        pagination_layout.addWidget(self.first_page_btn)
+        pagination_layout.addWidget(self.prev_page_btn)
+        pagination_layout.addWidget(self.page_label)
+        pagination_layout.addWidget(QLabel("Go to:"))
+        pagination_layout.addWidget(self.page_spinbox)
+        pagination_layout.addWidget(self.next_page_btn)
+        pagination_layout.addWidget(self.last_page_btn)
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(self.segment_count_label)
+        
+        self.pagination_frame.setVisible(False)  # Hidden by default
+        layout.addWidget(self.pagination_frame)
     
     def load_transcript(self, transcript: Transcript):
         """Load a transcript for display/editing.
         
-        For large transcripts (>100 segments), uses simplified display mode
-        to prevent crashes and improve performance.
+        For large transcripts (>100 segments), uses pagination and 
+        simplified display mode to prevent crashes and improve performance.
         """
         from src.utils.logger import get_logger
         
@@ -407,26 +461,34 @@ class TranscriptEditor(QWidget):
         segment_count = len(transcript.segments)
         logger.info(f"Loading transcript with {segment_count} segments")
         
-        # CRITICAL: For large transcripts, use simplified display to prevent crashes
+        # Store full transcript for pagination
+        self._full_transcript = transcript
+        self._current_page = 0
+        
+        # Calculate pages
+        self._total_pages = max(1, (segment_count + self.SEGMENTS_PER_PAGE - 1) // self.SEGMENTS_PER_PAGE)
+        
+        # CRITICAL: For large transcripts, use pagination and simplified display
         if segment_count > LARGE_TRANSCRIPT_THRESHOLD:
-            logger.info(f"Large transcript - enabling simplified display mode")
+            logger.info(f"Large transcript - enabling pagination ({self._total_pages} pages)")
             self._enable_simple_mode()
+            self._show_pagination(True)
+            self._update_pagination_controls()
+            # Load first page only
+            self._load_page(0)
         else:
             self._disable_simple_mode()
-        
-        # Load transcript into model
-        try:
-            self.model.set_transcript(transcript)
-            
-            # Only resize rows for small transcripts (expensive operation)
-            if segment_count <= LARGE_TRANSCRIPT_THRESHOLD:
+            self._show_pagination(False)
+            # Load all segments for small transcripts
+            try:
+                self.model.set_transcript(transcript)
                 self.table_view.resizeRowsToContents()
-            
-            logger.info(f"Transcript loaded: {segment_count} segments")
-            
-        except Exception as e:
-            logger.error(f"Error loading transcript: {e}", exc_info=True)
-            raise
+                logger.info(f"Transcript loaded: {segment_count} segments")
+            except Exception as e:
+                logger.error(f"Error loading transcript: {e}", exc_info=True)
+                raise
+        
+        self.segment_count_label.setText(f"{segment_count} segments total")
     
     def _enable_simple_mode(self):
         """Enable simplified display mode for large transcripts."""
@@ -467,23 +529,120 @@ class TranscriptEditor(QWidget):
         self.table_view.verticalHeader().setDefaultSectionSize(60)
         self.table_view.setWordWrap(True)
     
+    # ==================== PAGINATION METHODS ====================
+    
+    def _show_pagination(self, show: bool):
+        """Show or hide pagination controls."""
+        self.pagination_frame.setVisible(show)
+    
+    def _update_pagination_controls(self):
+        """Update pagination controls based on current state."""
+        self.page_label.setText(f"Page {self._current_page + 1} of {self._total_pages}")
+        self.page_spinbox.setMaximum(self._total_pages)
+        self.page_spinbox.blockSignals(True)
+        self.page_spinbox.setValue(self._current_page + 1)
+        self.page_spinbox.blockSignals(False)
+        
+        # Enable/disable navigation buttons
+        self.first_page_btn.setEnabled(self._current_page > 0)
+        self.prev_page_btn.setEnabled(self._current_page > 0)
+        self.next_page_btn.setEnabled(self._current_page < self._total_pages - 1)
+        self.last_page_btn.setEnabled(self._current_page < self._total_pages - 1)
+    
+    def _load_page(self, page: int):
+        """Load a specific page of segments."""
+        from src.utils.logger import get_logger
+        logger = get_logger("transcript_editor")
+        
+        if not self._full_transcript:
+            return
+        
+        # Clamp page number
+        page = max(0, min(page, self._total_pages - 1))
+        self._current_page = page
+        
+        # Calculate segment range for this page
+        start_idx = page * self.SEGMENTS_PER_PAGE
+        end_idx = min(start_idx + self.SEGMENTS_PER_PAGE, len(self._full_transcript.segments))
+        
+        logger.debug(f"Loading page {page + 1}: segments {start_idx + 1} to {end_idx}")
+        
+        # Create a subset transcript for this page
+        page_segments = self._full_transcript.segments[start_idx:end_idx]
+        page_transcript = Transcript(segments=page_segments)
+        
+        # Load into model
+        try:
+            self.model.set_transcript(page_transcript)
+            self._update_pagination_controls()
+            
+            # Scroll to top of page
+            if self.model.rowCount() > 0:
+                self.table_view.scrollToTop()
+                
+        except Exception as e:
+            logger.error(f"Error loading page {page + 1}: {e}", exc_info=True)
+    
+    def _go_first_page(self):
+        """Navigate to first page."""
+        self._load_page(0)
+    
+    def _go_prev_page(self):
+        """Navigate to previous page."""
+        self._load_page(self._current_page - 1)
+    
+    def _go_next_page(self):
+        """Navigate to next page."""
+        self._load_page(self._current_page + 1)
+    
+    def _go_last_page(self):
+        """Navigate to last page."""
+        self._load_page(self._total_pages - 1)
+    
+    def _on_page_changed(self, page: int):
+        """Handle page spinbox change."""
+        self._load_page(page - 1)  # Spinbox is 1-based
+    
+    def _get_page_for_segment(self, segment_id: str) -> int:
+        """Get the page number containing a segment."""
+        if not self._full_transcript:
+            return 0
+        for i, seg in enumerate(self._full_transcript.segments):
+            if seg.id == segment_id:
+                return i // self.SEGMENTS_PER_PAGE
+        return 0
+    
+    # ==================== END PAGINATION METHODS ====================
+    
     def set_transcript(self, transcript: Transcript):
         """Alias for load_transcript for compatibility."""
         self.load_transcript(transcript)
     
     def get_transcript(self) -> Optional[Transcript]:
-        """Get the current transcript."""
+        """Get the full transcript (not just current page)."""
+        # Return full transcript if using pagination
+        if self._full_transcript:
+            return self._full_transcript
         return self.model.get_transcript()
     
     def highlight_segment(self, segment_id: str):
-        """Highlight a segment and scroll to it."""
+        """Highlight a segment and scroll to it.
+        
+        For paginated transcripts, navigates to the correct page first.
+        """
+        # For paginated transcripts, check if we need to change pages
+        if self._full_transcript and self._total_pages > 1:
+            target_page = self._get_page_for_segment(segment_id)
+            if target_page != self._current_page:
+                self._load_page(target_page)
+        
         self.model.highlight_segment(segment_id)
         
         # Scroll to segment
         row = self.model.get_row_for_segment(segment_id)
         if row >= 0:
             index = self.model.index(row, 0)
-            self.table_view.scrollTo(index)
+            self.table_view.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
     
     def get_selected_segment(self) -> Optional[Segment]:
         """Get the currently selected segment."""

@@ -1,6 +1,6 @@
 # Custom Vocabulary for PersonalTranscribe
-# Add one word or phrase per line to help with transcription accuracy.
-# Example:
-# Anthropic
-# Claude
-# PersonalTranscribe
+Angela
+Dacia
+Groveware
+Leslie
+Nicole
