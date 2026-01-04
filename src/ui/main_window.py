@@ -801,33 +801,19 @@ class MainWindow(QMainWindow):
             parent=self
         )
         
-        # Store the streaming file path for recovery
-        streaming_file_path = None
+        # Store the file path when signal is received (signal now passes path, not object!)
+        result_file_path = None
         
-        def on_complete(transcript):
-            nonlocal streaming_file_path
-            logger.info(f"on_complete called with transcript: {transcript is not None}")
-            if transcript:
-                # Just store the segment count - we'll load from autosave file instead
-                logger.info(f"Transcript received: {len(transcript.segments)} segments")
+        def on_complete(file_path: str):
+            nonlocal result_file_path
+            logger.info(f"on_complete called with file path: {file_path}")
+            result_file_path = file_path
         
         self.transcription_dialog.transcription_complete.connect(on_complete)
         logger.info("Starting transcription dialog...")
         self.transcription_dialog.start()
-        
-        # Get streaming file path before exec
-        if hasattr(self.transcription_dialog, 'worker') and self.transcription_dialog.worker:
-            streaming_file_path = getattr(self.transcription_dialog.worker, '_stream_file_path', None)
-        
         self.transcription_dialog.exec()
         logger.info("Dialog exec() returned")
-        
-        # Get streaming file path after transcription
-        if self.transcription_dialog and hasattr(self.transcription_dialog, 'worker'):
-            worker = self.transcription_dialog.worker
-            if worker:
-                streaming_file_path = getattr(worker, '_stream_file_path', None)
-                logger.info(f"Streaming file: {streaming_file_path}")
         
         # Dialog closed - clean up completely
         logger.info("Cleaning up dialog...")
@@ -842,26 +828,55 @@ class MainWindow(QMainWindow):
             dialog.deleteLater()
         
         logger.info("Dialog deleted, processing events...")
-        
-        # Process events
         QApplication.processEvents()
         
-        # Load from the most recent autosave file instead of passing object
-        logger.info("Looking for autosave files...")
+        # Load from the file path we received (or search for recent file as fallback)
+        if result_file_path and os.path.exists(result_file_path):
+            logger.info(f"Loading from received file path: {result_file_path}")
+            self._load_transcript_from_file(result_file_path)
+        else:
+            logger.warning("No file path received, searching for recent files...")
+            self._try_load_recent_transcription()
+    
+    def _load_transcript_from_file(self, file_path: str):
+        """Load transcript from a streaming JSON file."""
+        try:
+            from src.ui.transcription_dialog import TranscriptionWorkerV2
+            logger.info(f"Loading transcript from: {file_path}")
+            transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+            if transcript:
+                logger.info(f"Loaded transcript: {len(transcript.segments)} segments")
+                self._on_transcription_finished(transcript)
+            else:
+                logger.error("Failed to load transcript from file")
+                QMessageBox.warning(
+                    self,
+                    "Load Error",
+                    f"Failed to load transcript from:\n{file_path}"
+                )
+                self.transcribe_action.setEnabled(True)
+        except Exception as e:
+            logger.error(f"Error loading transcript from file: {e}", exc_info=True)
+            QMessageBox.warning(
+                self,
+                "Load Error", 
+                f"Error loading transcript:\n{e}\n\nFile: {file_path}"
+            )
+            self.transcribe_action.setEnabled(True)
+    
+    def _try_load_recent_transcription(self):
+        """Try to find and load the most recent transcription file."""
         autosave_dir = os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
             "PersonalTranscribe",
             "autosave"
         )
-        
-        # Also check streaming dir
         streaming_dir = os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
             "PersonalTranscribe", 
             "streaming"
         )
         
-        # Find most recent file
         latest_file = None
         latest_time = 0
         
@@ -874,29 +889,23 @@ class MainWindow(QMainWindow):
                         latest_time = mtime
                         latest_file = fpath
         
-        if latest_file and (time.time() - latest_time) < 60:  # File from last minute
-            logger.info(f"Loading from recent file: {latest_file}")
-            try:
-                if latest_file.endswith('.ptproj'):
-                    from src.models.project import ProjectManager
-                    project = ProjectManager.load(latest_file)
-                    if project and project.transcript:
-                        self._on_transcription_finished(project.transcript)
-                elif latest_file.endswith('.json'):
-                    from src.ui.transcription_dialog import TranscriptionWorkerV2
-                    transcript = TranscriptionWorkerV2.load_from_stream_file(latest_file)
-                    if transcript:
-                        self._on_transcription_finished(transcript)
-            except Exception as e:
-                logger.error(f"Error loading from file: {e}", exc_info=True)
-                QMessageBox.information(
-                    self,
-                    "Transcription Complete",
-                    f"Transcription completed!\n\nFile saved to:\n{latest_file}\n\n"
-                    f"Use File > Open Project or File > Recover Transcription to load it."
-                )
+        if latest_file and (time.time() - latest_time) < 120:  # File from last 2 minutes
+            logger.info(f"Found recent file: {latest_file}")
+            if latest_file.endswith('.json'):
+                self._load_transcript_from_file(latest_file)
+            elif latest_file.endswith('.ptproj'):
+                from src.models.project import ProjectManager
+                project = ProjectManager.load(latest_file)
+                if project and project.transcript:
+                    self._on_transcription_finished(project.transcript)
         else:
             logger.warning("No recent transcription file found")
+            QMessageBox.information(
+                self,
+                "Transcription",
+                "Transcription may have completed but the file could not be located.\n\n"
+                "Check File > Recover Transcription to find saved transcriptions."
+            )
             self.transcribe_action.setEnabled(True)
     
     def _on_transcription_finished(self, transcript: Transcript):

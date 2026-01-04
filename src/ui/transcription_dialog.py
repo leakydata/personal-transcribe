@@ -696,7 +696,7 @@ class TranscriptionWorkerV2(QThread):
 class TranscriptionProgressDialog(QDialog):
     """Detailed progress dialog for transcription."""
     
-    transcription_complete = pyqtSignal(object)  # Transcript
+    transcription_complete = pyqtSignal(str)  # File path to load from
     
     def __init__(
         self,
@@ -894,13 +894,22 @@ class TranscriptionProgressDialog(QDialog):
         self.close_button.setEnabled(True)
         self.progress_bar.setValue(100)
         
-        if transcript:
-            logger.info(f"Transcription dialog emitting result: {len(transcript.segments)} segments")
+        # Get the streaming file path from the worker - emit path, not object!
+        file_path = ""
+        if self.worker:
+            file_path = getattr(self.worker, '_stream_file_path', "") or ""
+        
+        if transcript and file_path:
+            logger.info(f"Transcription dialog emitting file path: {file_path}")
+            logger.info(f"Transcript has {len(transcript.segments)} segments")
             try:
-                self.transcription_complete.emit(transcript)
-                logger.debug("Transcription result emitted successfully")
+                # Emit file path instead of object to avoid cross-thread issues
+                self.transcription_complete.emit(file_path)
+                logger.debug("File path emitted successfully")
             except Exception as e:
-                logger.error(f"Error emitting transcription result: {e}", exc_info=True)
+                logger.error(f"Error emitting file path: {e}", exc_info=True)
+        elif transcript:
+            logger.warning("Transcription complete but no streaming file path available")
     
     def _on_error(self, error_message: str):
         """Handle error."""
