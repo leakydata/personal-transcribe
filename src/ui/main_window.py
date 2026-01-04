@@ -215,23 +215,6 @@ class MainWindow(QMainWindow):
         self.set_speaker_label_action.setEnabled(False)
         edit_menu.addAction(self.set_speaker_label_action)
         
-        edit_menu.addSeparator()
-        
-        # AI submenu
-        ai_menu = edit_menu.addMenu("&AI Features")
-        
-        self.ai_settings_action = QAction("AI &Settings...", self)
-        self.ai_settings_action.triggered.connect(self.open_ai_settings)
-        ai_menu.addAction(self.ai_settings_action)
-        
-        ai_menu.addSeparator()
-        
-        self.ai_polish_action = QAction("&Polish Transcript...", self)
-        self.ai_polish_action.setShortcut("Ctrl+Shift+P")
-        self.ai_polish_action.triggered.connect(self.open_ai_polish)
-        self.ai_polish_action.setEnabled(False)
-        ai_menu.addAction(self.ai_polish_action)
-        
         # Transcription menu
         transcription_menu = menubar.addMenu("&Transcription")
         
@@ -330,6 +313,31 @@ class MainWindow(QMainWindow):
         self.toggle_dark_mode_action.setChecked(self.settings.theme == "dark")
         self.toggle_dark_mode_action.triggered.connect(self.toggle_dark_mode)
         view_menu.addAction(self.toggle_dark_mode_action)
+        
+        # AI menu (top-level for visibility)
+        ai_menu = menubar.addMenu("&AI")
+        
+        self.ai_settings_action = QAction("AI &Settings...", self)
+        self.ai_settings_action.triggered.connect(self.open_ai_settings)
+        ai_menu.addAction(self.ai_settings_action)
+        
+        ai_menu.addSeparator()
+        
+        self.ai_polish_all_action = QAction("Polish &Entire Transcript...", self)
+        self.ai_polish_all_action.setShortcut("Ctrl+Shift+P")
+        self.ai_polish_all_action.triggered.connect(lambda: self.open_ai_polish("all"))
+        self.ai_polish_all_action.setEnabled(False)
+        ai_menu.addAction(self.ai_polish_all_action)
+        
+        self.ai_polish_selected_action = QAction("Polish &Selected Lines...", self)
+        self.ai_polish_selected_action.triggered.connect(lambda: self.open_ai_polish("selected"))
+        self.ai_polish_selected_action.setEnabled(False)
+        ai_menu.addAction(self.ai_polish_selected_action)
+        
+        self.ai_polish_range_action = QAction("Polish Time &Range...", self)
+        self.ai_polish_range_action.triggered.connect(lambda: self.open_ai_polish("range"))
+        self.ai_polish_range_action.setEnabled(False)
+        ai_menu.addAction(self.ai_polish_range_action)
         
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -881,15 +889,22 @@ class MainWindow(QMainWindow):
         self.set_speaker_label_action.setEnabled(enabled)
         self.next_low_conf_action.setEnabled(enabled)
         self.prev_low_conf_action.setEnabled(enabled)
-        self.ai_polish_action.setEnabled(enabled)
+        self.ai_polish_all_action.setEnabled(enabled)
+        self.ai_polish_selected_action.setEnabled(enabled)
+        self.ai_polish_range_action.setEnabled(enabled)
     
     def open_ai_settings(self):
         """Open AI settings dialog."""
         dialog = AISettingsDialog(self)
         dialog.exec()
     
-    def open_ai_polish(self):
-        """Open AI polish dialog."""
+    def open_ai_polish(self, mode: str = "all"):
+        """Open AI polish dialog with specified mode.
+        
+        Args:
+            mode: "all" for entire transcript, "selected" for selected lines,
+                  "range" for time range selection
+        """
         transcript = self.transcript_editor.get_transcript()
         if not transcript:
             QMessageBox.warning(self, "No Transcript", "Please load or create a transcript first.")
@@ -899,7 +914,60 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Empty Transcript", "The transcript has no segments to polish.")
             return
         
-        dialog = AIPolishDialog(transcript, self)
+        # Get segments based on mode
+        segments_to_polish = []
+        segment_indices = []
+        
+        if mode == "selected":
+            # Get selected rows from editor
+            selected_indices = self.transcript_editor.get_selected_segment_indices()
+            if not selected_indices:
+                QMessageBox.information(
+                    self, "No Selection", 
+                    "Please select one or more lines in the transcript to polish."
+                )
+                return
+            segment_indices = selected_indices
+            segments_to_polish = [transcript.segments[i] for i in selected_indices if i < len(transcript.segments)]
+            
+        elif mode == "range":
+            # Show time range dialog
+            from src.ui.ai_polish_dialog import TimeRangeDialog
+            range_dialog = TimeRangeDialog(
+                audio_duration=self.audio_player.get_duration() if self.audio_player else 0,
+                parent=self
+            )
+            if range_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            start_time, end_time = range_dialog.get_range()
+            
+            # Find segments in range
+            for i, seg in enumerate(transcript.segments):
+                if seg.start_time >= start_time and seg.end_time <= end_time:
+                    segments_to_polish.append(seg)
+                    segment_indices.append(i)
+                elif seg.start_time < end_time and seg.end_time > start_time:
+                    # Partially overlapping - include it
+                    segments_to_polish.append(seg)
+                    segment_indices.append(i)
+            
+            if not segments_to_polish:
+                QMessageBox.information(
+                    self, "No Segments",
+                    f"No segments found in the time range {start_time:.1f}s - {end_time:.1f}s"
+                )
+                return
+        else:
+            # Polish all
+            segments_to_polish = transcript.segments
+            segment_indices = list(range(len(transcript.segments)))
+        
+        dialog = AIPolishDialog(
+            transcript=transcript,
+            segments_to_polish=segments_to_polish,
+            segment_indices=segment_indices,
+            parent=self
+        )
         dialog.changes_applied.connect(self._on_ai_polish_applied)
         dialog.exec()
     

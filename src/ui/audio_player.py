@@ -437,3 +437,7 @@ class AudioPlayer(QWidget):
     def get_current_position(self) -> float:
         """Get current playback position in seconds."""
         return self.player.position() / 1000.0
+    
+    def get_duration(self) -> float:
+        """Get total audio duration in seconds."""
+        return self.duration_seconds

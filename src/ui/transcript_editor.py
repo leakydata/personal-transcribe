@@ -366,7 +366,7 @@ class TranscriptEditor(QWidget):
         self.table_view.setObjectName("transcriptTable")
         self.table_view.setAlternatingRowColors(True)
         self.table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_view.verticalHeader().setVisible(True)
         self.table_view.verticalHeader().setDefaultSectionSize(40)
         self.table_view.setWordWrap(True)
