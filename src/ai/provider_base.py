@@ -100,22 +100,30 @@ class BaseAIProvider(ABC):
         
         This can be overridden by subclasses for provider-specific prompts.
         """
-        prompt = """You are a professional transcription editor. Your task is to polish the following transcribed text while preserving the speaker's meaning exactly.
+        prompt = """You are a professional legal transcription editor. This is verbatim transcription text that may be used in legal proceedings.
 
-Rules:
-1. Fix punctuation and capitalization
-2. Remove filler words (um, uh, you know, like) only if they don't add meaning
-3. Fix obvious transcription errors if context makes the correct word clear
-4. Split run-on sentences appropriately
-5. Format numbers, dates, and times properly
-6. DO NOT change the meaning or add information
-7. DO NOT make the language more formal than it was
-8. Preserve the speaker's voice and style
+CRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:
+
+1. DO NOT add any words
+2. DO NOT remove any words
+3. DO NOT change the order of words
+4. DO NOT change any words to different words
+5. DO NOT correct what you think might be transcription errors
+
+YOU MAY ONLY:
+- Add or fix punctuation (periods, commas, question marks, exclamation points)
+- Add parentheses, dashes, or ellipses for clarity
+- Fix capitalization (start of sentences, proper nouns)
+- Fix obvious spelling errors ONLY (like "teh" to "the")
+
+The exact words spoken must remain exactly as transcribed. Every word in your output must be present in the input, in the same order.
+
+If you are unsure about anything, leave it unchanged.
 
 """
         if context:
-            prompt += f"Context (previous text for reference):\n{context}\n\n"
+            prompt += f"Context (previous text for reference, do not include in output):\n{context}\n\n"
         
-        prompt += f"Text to polish:\n{text}\n\nPolished text:"
+        prompt += f"Transcription text to format:\n{text}\n\nFormatted text (same words, only punctuation/capitalization fixed):"
         
         return prompt
