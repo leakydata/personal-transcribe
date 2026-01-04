@@ -122,6 +122,10 @@ class MainWindow(QMainWindow):
         self.open_project_action.triggered.connect(self.open_project)
         file_menu.addAction(self.open_project_action)
         
+        self.recover_action = QAction("&Recover Transcription...", self)
+        self.recover_action.triggered.connect(self.recover_transcription)
+        file_menu.addAction(self.recover_action)
+        
         file_menu.addSeparator()
         
         self.save_action = QAction("&Save Project", self)
@@ -546,6 +550,117 @@ class MainWindow(QMainWindow):
             self.is_modified = False
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load project:\n{e}")
+    
+    def recover_transcription(self):
+        """Recover transcription from streaming/autosave files."""
+        import os
+        
+        # Check for streaming files
+        stream_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "PersonalTranscribe",
+            "streaming"
+        )
+        
+        autosave_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "PersonalTranscribe",
+            "autosave"
+        )
+        
+        # Collect all recovery files
+        recovery_files = []
+        
+        # Check streaming directory
+        if os.path.exists(stream_dir):
+            for f in os.listdir(stream_dir):
+                if f.endswith('.json'):
+                    full_path = os.path.join(stream_dir, f)
+                    mtime = os.path.getmtime(full_path)
+                    recovery_files.append(("stream", full_path, f, mtime))
+        
+        # Check autosave directory
+        if os.path.exists(autosave_dir):
+            for f in os.listdir(autosave_dir):
+                if f.endswith('.ptproj'):
+                    full_path = os.path.join(autosave_dir, f)
+                    mtime = os.path.getmtime(full_path)
+                    recovery_files.append(("autosave", full_path, f, mtime))
+        
+        if not recovery_files:
+            QMessageBox.information(
+                self,
+                "No Recovery Files",
+                "No recovery files found.\n\n"
+                "Recovery files are created automatically during transcription."
+            )
+            return
+        
+        # Sort by modification time (newest first)
+        recovery_files.sort(key=lambda x: x[3], reverse=True)
+        
+        # Show selection dialog
+        from datetime import datetime
+        items = []
+        for file_type, path, name, mtime in recovery_files[:20]:  # Show max 20
+            dt = datetime.fromtimestamp(mtime)
+            time_str = dt.strftime("%Y-%m-%d %H:%M")
+            type_label = "[STREAM]" if file_type == "stream" else "[AUTOSAVE]"
+            items.append(f"{type_label} {name} ({time_str})")
+        
+        from PyQt6.QtWidgets import QInputDialog
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Recover Transcription",
+            "Select a file to recover:\n(Newest files shown first)",
+            items,
+            0,
+            False
+        )
+        
+        if not ok or not choice:
+            return
+        
+        # Find the selected file
+        selected_idx = items.index(choice)
+        file_type, file_path, _, _ = recovery_files[selected_idx]
+        
+        try:
+            if file_type == "stream":
+                # Load from streaming JSON
+                from src.ui.transcription_dialog import TranscriptionWorkerV2
+                transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+                
+                if transcript:
+                    self.transcript_editor.load_transcript(transcript)
+                    self.statistics_panel.set_transcript(transcript)
+                    self._enable_edit_actions(True)
+                    self.save_action.setEnabled(True)
+                    self.save_as_action.setEnabled(True)
+                    self.export_pdf_action.setEnabled(True)
+                    self.is_modified = True
+                    
+                    QMessageBox.information(
+                        self,
+                        "Recovery Successful",
+                        f"Recovered {transcript.segment_count} segments from streaming file.\n\n"
+                        "Use File > Save Project As to save your work."
+                    )
+                    self.status_label.setText(f"Recovered {transcript.segment_count} segments")
+                else:
+                    QMessageBox.warning(self, "Recovery Failed", "Could not load the streaming file.")
+            else:
+                # Load as project file
+                self._load_project(file_path)
+                QMessageBox.information(
+                    self,
+                    "Recovery Successful",
+                    "Project recovered from autosave.\n\n"
+                    "Use File > Save Project As to save to a permanent location."
+                )
+        except Exception as e:
+            logger.error(f"Recovery failed: {e}", exc_info=True)
+            QMessageBox.critical(self, "Recovery Failed", f"Failed to recover:\n{e}")
     
     def save_project(self):
         """Save current project."""

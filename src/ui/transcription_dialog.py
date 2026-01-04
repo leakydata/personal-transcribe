@@ -53,6 +53,7 @@ class TranscriptionWorkerV2(QThread):
         self._cancelled = False
         self._model = None  # Keep reference for cleanup
         self._temp_audio_path: Optional[str] = None  # For preprocessed audio
+        self._stream_file_path: Optional[str] = None  # For streaming transcription to disk
     
     def cancel(self):
         """Request cancellation."""
@@ -127,6 +128,163 @@ class TranscriptionWorkerV2(QThread):
                 self.log_message.emit("Cleaned up temporary files", "info")
             except Exception as e:
                 self.log_message.emit(f"Could not clean temp file: {e}", "warning")
+    
+    def _init_stream_file(self) -> str:
+        """Initialize streaming JSON file for transcription.
+        
+        Creates a JSON file that segments will be appended to during transcription.
+        This ensures partial work is saved even if the app crashes.
+        
+        Returns:
+            Path to the streaming file
+        """
+        import json
+        from datetime import datetime
+        
+        # Create streaming directory
+        stream_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "PersonalTranscribe",
+            "streaming"
+        )
+        os.makedirs(stream_dir, exist_ok=True)
+        
+        # Create filename based on audio file and timestamp
+        audio_name = Path(self.audio_path).stem
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stream_filename = f"{audio_name}_{timestamp}.json"
+        stream_path = os.path.join(stream_dir, stream_filename)
+        
+        # Initialize the file with metadata
+        initial_data = {
+            "version": "1.0",
+            "status": "in_progress",
+            "audio_file": self.audio_path,
+            "model": self.model_size,
+            "started_at": datetime.now().isoformat(),
+            "audio_duration": 0,
+            "segments": []
+        }
+        
+        with open(stream_path, 'w', encoding='utf-8') as f:
+            json.dump(initial_data, f, indent=2)
+        
+        self._stream_file_path = stream_path
+        self.log_message.emit(f"Streaming to: {stream_filename}", "info")
+        logger.info(f"Streaming transcription to: {stream_path}")
+        
+        return stream_path
+    
+    def _append_segment_to_stream(self, segment_data: dict):
+        """Append a segment to the streaming JSON file.
+        
+        Args:
+            segment_data: Dict with segment info (id, start, end, text, words)
+        """
+        import json
+        
+        if not self._stream_file_path:
+            return
+        
+        try:
+            # Read current file
+            with open(self._stream_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Append segment
+            data["segments"].append(segment_data)
+            
+            # Write back
+            with open(self._stream_file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+                
+        except Exception as e:
+            logger.warning(f"Failed to append segment to stream: {e}")
+    
+    def _finalize_stream_file(self, audio_duration: float, status: str = "complete"):
+        """Finalize the streaming file with completion status.
+        
+        Args:
+            audio_duration: Total audio duration
+            status: Final status (complete, cancelled, error)
+        """
+        import json
+        from datetime import datetime
+        
+        if not self._stream_file_path:
+            return
+        
+        try:
+            with open(self._stream_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            data["status"] = status
+            data["audio_duration"] = audio_duration
+            data["completed_at"] = datetime.now().isoformat()
+            data["segment_count"] = len(data["segments"])
+            
+            with open(self._stream_file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            
+            self.log_message.emit(f"Saved {len(data['segments'])} segments to recovery file", "success")
+            logger.info(f"Stream file finalized: {self._stream_file_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to finalize stream file: {e}")
+    
+    def get_stream_file_path(self) -> Optional[str]:
+        """Get the path to the streaming file (for recovery purposes)."""
+        return self._stream_file_path
+    
+    @staticmethod
+    def load_from_stream_file(stream_path: str) -> Optional['Transcript']:
+        """Load a transcript from a streaming JSON file.
+        
+        Args:
+            stream_path: Path to the streaming JSON file
+            
+        Returns:
+            Transcript object, or None if loading failed
+        """
+        import json
+        from src.models.transcript import Transcript, Segment, Word
+        
+        try:
+            with open(stream_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            segments = []
+            for seg_data in data.get("segments", []):
+                words = []
+                for word_data in seg_data.get("words", []):
+                    words.append(Word(
+                        text=word_data["text"],
+                        start=word_data["start"],
+                        end=word_data["end"],
+                        confidence=word_data["confidence"]
+                    ))
+                
+                segment = Segment(
+                    id=seg_data["id"],
+                    start_time=seg_data["start_time"],
+                    end_time=seg_data["end_time"],
+                    text=seg_data["text"],
+                    words=words
+                )
+                segments.append(segment)
+            
+            transcript = Transcript(
+                segments=segments,
+                audio_duration=data.get("audio_duration", 0),
+                audio_file=data.get("audio_file", "")
+            )
+            
+            logger.info(f"Loaded {len(segments)} segments from stream file: {stream_path}")
+            return transcript
+            
+        except Exception as e:
+            logger.error(f"Failed to load stream file: {e}")
+            return None
     
     def run(self):
         try:
@@ -260,12 +418,15 @@ class TranscriptionWorkerV2(QThread):
             self.stage_changed.emit("Transcribing audio...")
             self.progress.emit(15)
             
+            # Initialize streaming file for crash recovery
+            self._init_stream_file()
+            
             # Process segments from generator (allows cancellation during transcription)
             transcript_segments = []
             segment_count = 0
             last_end_time = 0.0
             
-            self.log_message.emit("Processing audio segments (cancel available)...", "info")
+            self.log_message.emit("Processing audio segments (streaming to disk)...", "info")
             
             for segment in segments_generator:
                 try:
@@ -273,6 +434,7 @@ class TranscriptionWorkerV2(QThread):
                     if self._cancelled:
                         logger.info(f"Transcription cancelled after {segment_count} segments")
                         self.log_message.emit(f"Cancelled after {segment_count} segments", "warning")
+                        self._finalize_stream_file(last_end_time, status="cancelled")
                         self._cleanup_temp_files()
                         self.cancelled.emit()
                         return
@@ -300,6 +462,24 @@ class TranscriptionWorkerV2(QThread):
                     )
                     transcript_segments.append(transcript_segment)
                     last_end_time = segment.end
+                    
+                    # Stream segment to disk for crash recovery
+                    segment_data = {
+                        "id": transcript_segment.id,
+                        "start_time": transcript_segment.start_time,
+                        "end_time": transcript_segment.end_time,
+                        "text": transcript_segment.text,
+                        "words": [
+                            {
+                                "text": w.text,
+                                "start": w.start,
+                                "end": w.end,
+                                "confidence": w.confidence
+                            }
+                            for w in transcript_segment.words
+                        ]
+                    }
+                    self._append_segment_to_stream(segment_data)
                     
                     # Estimate progress based on audio position
                     if audio_duration > 0:
@@ -352,6 +532,9 @@ class TranscriptionWorkerV2(QThread):
             self.log_message.emit(f"Total: {len(transcript_segments)} segments, {word_count} words", "success")
             logger.info(f"Transcription complete: {total_segments} segments, {word_count} words, {transcribe_time:.1f}s")
             
+            # Finalize streaming file
+            self._finalize_stream_file(audio_duration, status="complete")
+            
             # Cleanup temp files
             self._cleanup_temp_files()
             
@@ -366,6 +549,12 @@ class TranscriptionWorkerV2(QThread):
             import traceback
             error_tb = traceback.format_exc()
             logger.critical(f"Transcription failed: {e}", exc_info=True)
+            
+            # Finalize stream file with error status (preserves partial work)
+            if self._stream_file_path:
+                self._finalize_stream_file(0, status="error")
+                self.log_message.emit(f"Partial transcript saved for recovery", "warning")
+            
             self._cleanup_temp_files()
             self.log_message.emit(f"ERROR: {str(e)}", "error")
             self.error.emit(f"{str(e)}\n\n{error_tb}")
