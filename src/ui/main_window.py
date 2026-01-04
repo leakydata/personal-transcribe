@@ -799,29 +799,39 @@ class MainWindow(QMainWindow):
             parent=self
         )
         
-        # Store result instead of using signal to avoid race condition with dialog closure
-        result_transcript = None
+        # Store result as JSON to completely break any Qt object references
+        result_json = None
         
         def on_complete(transcript):
-            nonlocal result_transcript
-            result_transcript = transcript
+            nonlocal result_json
+            if transcript:
+                # Serialize to JSON - breaks all object references
+                result_json = transcript.to_json()
         
         self.transcription_dialog.transcription_complete.connect(on_complete)
         self.transcription_dialog.start()
         self.transcription_dialog.exec()
         
-        # Dialog closed - now safely process the result
-        # Use deleteLater to ensure clean dialog destruction
+        # Dialog closed - clean up completely
         dialog = self.transcription_dialog
         self.transcription_dialog = None
+        
+        # Fully disconnect and delete the dialog
+        try:
+            dialog.transcription_complete.disconnect()
+        except:
+            pass
         dialog.deleteLater()
         
-        # Process events to ensure dialog is fully closed
-        QApplication.processEvents()
+        # Multiple processEvents to ensure complete cleanup
+        for _ in range(3):
+            QApplication.processEvents()
         
-        # Now handle the transcription result
-        if result_transcript:
-            self._on_transcription_finished(result_transcript)
+        # Now deserialize and handle the result (completely fresh objects)
+        if result_json:
+            from src.models.transcript import Transcript
+            fresh_transcript = Transcript.from_json(result_json)
+            self._on_transcription_finished(fresh_transcript)
     
     def _on_transcription_finished(self, transcript: Transcript):
         """Handle transcription completion."""
@@ -853,6 +863,7 @@ class MainWindow(QMainWindow):
     def _load_transcript_delayed(self):
         """Load transcript into UI with delay to prevent crashes."""
         from src.utils.logger import get_logger
+        import gc
         logger = get_logger("main_window")
         
         transcript = getattr(self, '_pending_transcript', None)
@@ -863,6 +874,9 @@ class MainWindow(QMainWindow):
         
         try:
             logger.info(f"Loading transcript with {transcript.segment_count} segments...")
+            
+            # Force garbage collection to clean up any lingering objects
+            gc.collect()
             
             # Process events before heavy UI work
             QApplication.processEvents()
@@ -880,9 +894,12 @@ class MainWindow(QMainWindow):
             self._enable_edit_actions(True)
             self.is_modified = True
             
+            # Store for later use
+            self._current_transcript_for_stats = transcript
+            
             # Delay statistics update - give Qt more time
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(300, lambda: self._update_statistics_delayed(transcript))
+            QTimer.singleShot(500, self._update_statistics_safe)
             
             self.status_label.setText(
                 f"Transcription complete: {transcript.segment_count} segments, "
@@ -892,12 +909,14 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             logger.error(f"Error loading transcript into UI: {e}", exc_info=True)
-            QMessageBox.warning(
+            # Show success message anyway - the file was saved!
+            QMessageBox.information(
                 self,
-                "Display Error",
-                f"The transcript was saved but could not be fully displayed:\n{e}\n\n"
-                f"Your transcript has been auto-saved to:\n{autosave_path}\n\n"
-                "You can open this file using File > Open Project."
+                "Transcription Complete",
+                f"Transcription completed successfully!\n\n"
+                f"Due to a display issue, the transcript couldn't be shown directly.\n\n"
+                f"Your transcript has been saved to:\n{autosave_path}\n\n"
+                f"Use File > Open Project to load it."
             )
             # Still enable save so user can save properly
             self.save_action.setEnabled(True)
@@ -906,11 +925,15 @@ class MainWindow(QMainWindow):
             # Clean up
             self._pending_transcript = None
             self._pending_autosave_path = None
+            gc.collect()
     
-    def _update_statistics_delayed(self, transcript):
-        """Update statistics panel with delay."""
+    def _update_statistics_safe(self):
+        """Update statistics panel safely."""
         try:
-            self.statistics_panel.set_transcript(transcript)
+            transcript = getattr(self, '_current_transcript_for_stats', None)
+            if transcript:
+                self.statistics_panel.set_transcript(transcript)
+                self._current_transcript_for_stats = None
         except Exception as e:
             from src.utils.logger import get_logger
             logger = get_logger("main_window")
