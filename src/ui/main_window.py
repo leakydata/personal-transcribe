@@ -612,10 +612,16 @@ class MainWindow(QMainWindow):
         self.transcribe_action.setEnabled(True)
         
         if transcript:
+            # CRITICAL: Auto-save transcript to disk IMMEDIATELY before any UI work
+            # This ensures we never lose transcription work even if display crashes
+            autosave_path = self._autosave_transcript(transcript)
+            if autosave_path:
+                logger.info(f"Transcript auto-saved to: {autosave_path}")
+            
             try:
                 logger.info(f"Loading transcript with {transcript.segment_count} segments...")
                 
-                # Load transcript (may be slow for large files)
+                # Load transcript into editor
                 self.transcript_editor.load_transcript(transcript)
                 logger.debug("Transcript loaded into editor")
                 
@@ -637,15 +643,66 @@ class MainWindow(QMainWindow):
                 
             except Exception as e:
                 logger.error(f"Error loading transcript into UI: {e}", exc_info=True)
-                QMessageBox.critical(
+                QMessageBox.warning(
                     self,
-                    "Error",
-                    f"Failed to display transcript:\n{e}\n\n"
-                    "The transcription completed but could not be displayed. "
-                    "Check Help > View Log File for details."
+                    "Display Error",
+                    f"The transcript was saved but could not be fully displayed:\n{e}\n\n"
+                    f"Your transcript has been auto-saved to:\n{autosave_path}\n\n"
+                    "You can open this file using File > Open Project."
                 )
+                # Still enable save so user can save properly
+                self.save_action.setEnabled(True)
+                self.save_as_action.setEnabled(True)
         else:
             self.status_label.setText("Transcription failed")
+    
+    def _autosave_transcript(self, transcript: Transcript) -> Optional[str]:
+        """Auto-save transcript to a recovery file immediately after transcription.
+        
+        Returns:
+            Path to the saved file, or None if save failed
+        """
+        import os
+        from datetime import datetime
+        from src.models.project import Project, ProjectManager
+        
+        try:
+            # Create autosave directory
+            autosave_dir = os.path.join(
+                os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                "PersonalTranscribe",
+                "autosave"
+            )
+            os.makedirs(autosave_dir, exist_ok=True)
+            
+            # Generate filename from audio file and timestamp
+            if self.current_audio_path:
+                base_name = os.path.splitext(os.path.basename(self.current_audio_path))[0]
+            else:
+                base_name = "transcript"
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            autosave_filename = f"{base_name}_{timestamp}.ptproj"
+            autosave_path = os.path.join(autosave_dir, autosave_filename)
+            
+            # Create a project and save it
+            project = Project(
+                audio_path=self.current_audio_path or "",
+                transcript=transcript,
+                vocabulary=self.vocabulary,
+                title=f"Auto-saved: {base_name}",
+                notes=f"Auto-saved at {datetime.now().isoformat()}",
+                metadata=self.metadata
+            )
+            
+            ProjectManager.save_project(project, autosave_path)
+            logger.info(f"Transcript auto-saved: {transcript.segment_count} segments to {autosave_path}")
+            
+            return autosave_path
+            
+        except Exception as e:
+            logger.error(f"Failed to auto-save transcript: {e}", exc_info=True)
+            return None
     
     
     def export_pdf(self):

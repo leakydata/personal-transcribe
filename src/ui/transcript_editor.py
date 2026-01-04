@@ -32,6 +32,9 @@ COLOR_LOW_CONFIDENCE = "#c62828"       # Red
 BACKGROUND_MEDIUM_CONFIDENCE = "#fff8e1"  # Light amber
 BACKGROUND_LOW_CONFIDENCE = "#ffebee"     # Light red
 
+# Threshold for "large" transcripts that need simplified display
+LARGE_TRANSCRIPT_THRESHOLD = 100
+
 
 def get_word_confidence_html(segment: Segment, show_confidence: bool = True) -> str:
     """Generate HTML with color-coded words based on confidence.
@@ -353,7 +356,7 @@ class TranscriptEditor(QWidget):
     
     def __init__(self):
         super().__init__()
-        
+        self._simple_mode = False  # Whether we're in simplified display mode
         self._init_ui()
     
     def _init_ui(self):
@@ -392,78 +395,81 @@ class TranscriptEditor(QWidget):
         layout.addWidget(self.table_view)
     
     def load_transcript(self, transcript: Transcript):
-        """Load a transcript for display/editing with progressive loading for large files."""
+        """Load a transcript for display/editing.
+        
+        For large transcripts (>100 segments), uses simplified display mode
+        to prevent crashes and improve performance.
+        """
         from src.utils.logger import get_logger
-        from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import QTimer
         
         logger = get_logger("transcript_editor")
         
         segment_count = len(transcript.segments)
         logger.info(f"Loading transcript with {segment_count} segments")
         
-        # For very large transcripts, disable confidence highlighting
-        # to prevent memory/performance issues with HTML rendering
-        if segment_count > 200:
-            logger.info(f"Large transcript ({segment_count} segments) - disabling confidence highlighting for performance")
-            self.model.show_confidence_highlighting = False
-        
-        # For large transcripts, use fixed row heights
-        if segment_count > 100:
-            logger.debug("Large transcript - using fixed row height")
-            self.table_view.verticalHeader().setDefaultSectionSize(60)
-        
-        # Progressive loading for large transcripts
-        if segment_count > 100:
-            logger.info("Using progressive loading for large transcript")
-            self._load_transcript_progressively(transcript, logger)
+        # CRITICAL: For large transcripts, use simplified display to prevent crashes
+        if segment_count > LARGE_TRANSCRIPT_THRESHOLD:
+            logger.info(f"Large transcript - enabling simplified display mode")
+            self._enable_simple_mode()
         else:
-            # Small transcripts load normally
+            self._disable_simple_mode()
+        
+        # Load transcript into model
+        try:
             self.model.set_transcript(transcript)
-            self.table_view.resizeRowsToContents()
-            logger.debug("Transcript loaded successfully")
+            
+            # Only resize rows for small transcripts (expensive operation)
+            if segment_count <= LARGE_TRANSCRIPT_THRESHOLD:
+                self.table_view.resizeRowsToContents()
+            
+            logger.info(f"Transcript loaded: {segment_count} segments")
+            
+        except Exception as e:
+            logger.error(f"Error loading transcript: {e}", exc_info=True)
+            raise
     
-    def _load_transcript_progressively(self, transcript: Transcript, logger):
-        """Load transcript in batches to prevent UI freeze."""
-        from PyQt6.QtWidgets import QApplication
+    def _enable_simple_mode(self):
+        """Enable simplified display mode for large transcripts."""
+        if self._simple_mode:
+            return
         
-        BATCH_SIZE = 50
-        segment_count = len(transcript.segments)
+        self._simple_mode = True
         
-        # First, set up the model with an empty transcript
-        from src.models.transcript import Transcript as TranscriptClass
-        empty_transcript = TranscriptClass(
-            segments=[],
-            audio_duration=transcript.audio_duration,
-            audio_file=transcript.audio_file
+        # Disable confidence highlighting (uses expensive HTML rendering)
+        self.model.show_confidence_highlighting = False
+        
+        # Use plain text delegate instead of rich text delegate
+        self.table_view.setItemDelegateForColumn(
+            TranscriptTableModel.COL_TEXT, 
+            QStyledItemDelegate(self)
         )
-        self.model.set_transcript(empty_transcript)
         
-        # Load segments in batches
-        loaded = 0
-        while loaded < segment_count:
-            batch_end = min(loaded + BATCH_SIZE, segment_count)
-            batch = transcript.segments[loaded:batch_end]
-            
-            # Add batch to the model's transcript
-            self.model.beginInsertRows(
-                self.model.index(0, 0).parent(),
-                loaded,
-                batch_end - 1
-            )
-            self.model.transcript.segments.extend(batch)
-            self.model.endInsertRows()
-            
-            loaded = batch_end
-            
-            # Let the UI process events
-            QApplication.processEvents()
-            
-            # Log progress
-            if loaded % 100 == 0 or loaded == segment_count:
-                logger.debug(f"Loaded {loaded}/{segment_count} segments")
+        # Use fixed row height
+        self.table_view.verticalHeader().setDefaultSectionSize(50)
         
-        logger.info(f"Progressive loading complete: {segment_count} segments")
+        # Disable word wrap for performance
+        self.table_view.setWordWrap(False)
+    
+    def _disable_simple_mode(self):
+        """Disable simplified display mode (restore rich text)."""
+        if not self._simple_mode:
+            return
+        
+        self._simple_mode = False
+        
+        # Re-enable confidence highlighting
+        self.model.show_confidence_highlighting = True
+        
+        # Restore rich text delegate
+        self.table_view.setItemDelegateForColumn(1, self.text_delegate)
+        
+        # Restore settings
+        self.table_view.verticalHeader().setDefaultSectionSize(40)
+        self.table_view.setWordWrap(True)
+    
+    def set_transcript(self, transcript: Transcript):
+        """Alias for load_transcript for compatibility."""
+        self.load_transcript(transcript)
     
     def get_transcript(self) -> Optional[Transcript]:
         """Get the current transcript."""
@@ -593,3 +599,24 @@ class TranscriptEditor(QWidget):
                 return segment
         
         return None
+    
+    def get_selected_segment_indices(self) -> List[int]:
+        """Get indices of all selected segments.
+        
+        Returns:
+            List of segment indices that are selected
+        """
+        selected_rows = set()
+        for index in self.table_view.selectedIndexes():
+            row = index.row()
+            # Map row to segment index (accounting for gaps if any)
+            segment = self.model.get_segment_at_row(row)
+            if segment:
+                transcript = self.model.get_transcript()
+                if transcript:
+                    try:
+                        seg_idx = transcript.segments.index(segment)
+                        selected_rows.add(seg_idx)
+                    except ValueError:
+                        pass
+        return sorted(list(selected_rows))
