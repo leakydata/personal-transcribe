@@ -770,18 +770,21 @@ class TranscriptEditor(QWidget):
         For paginated transcripts, navigates to the correct page first.
         Skips scrolling if user is currently editing to avoid disrupting their work.
         """
-        # Don't scroll or change pages while user is editing
-        # This prevents the view from jumping around during text input
-        if self.table_view.state() == QAbstractItemView.State.EditingState:
-            return
+        is_editing = self.table_view.state() == QAbstractItemView.State.EditingState
         
         # For paginated transcripts, check if we need to change pages
-        if self._full_transcript and self._total_pages > 1:
+        # (but don't change pages while editing)
+        if not is_editing and self._full_transcript and self._total_pages > 1:
             target_page = self._get_page_for_segment(segment_id)
             if target_page != self._current_page:
                 self._load_page(target_page)
         
+        # ALWAYS update the model's highlight - this makes the row visually highlighted
         self.model.highlight_segment(segment_id)
+        
+        # Only scroll if not editing
+        if is_editing:
+            return
         
         # Scroll to segment
         row = self.model.get_row_for_segment(segment_id)
