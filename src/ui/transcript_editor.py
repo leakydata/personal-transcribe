@@ -174,20 +174,20 @@ class TranscriptTableModel(QAbstractTableModel):
                 return segment.display_text
         
         elif role == Qt.ItemDataRole.BackgroundRole:
-            # Highlight current segment - use bright yellow for visibility in all themes
+            # Highlight current segment - use bright coral/orange for visibility in all themes
             if segment.id == self.highlighted_segment_id:
-                return QBrush(QColor("#fff176"))  # Bright yellow - readable in light/dark
+                return QBrush(QColor("#ff6b35"))  # Bright orange - highly visible
             # Highlight bookmarked segments
             if segment.is_bookmarked:
-                return QBrush(QColor("#e8f5e9"))
+                return QBrush(QColor("#4caf50"))  # Green - visible in both themes
             # Highlight segments with significant gaps (other party speaking)
             if self.show_gaps and col == self.COL_TIME:
                 gap = self._get_gap_before_segment(row)
                 if gap >= self.GAP_THRESHOLD:
-                    return QBrush(QColor("#e3f2fd"))  # Light blue for gaps
+                    return QBrush(QColor("#2196f3"))  # Bright blue for gaps
             # Highlight low confidence segments
             if segment.average_confidence < 0.8:
-                return QBrush(QColor("#fff8e1"))
+                return QBrush(QColor("#ffb74d"))  # Orange-amber for low confidence
         
         elif role == Qt.ItemDataRole.FontRole:
             if col == self.COL_TIME:
@@ -195,11 +195,21 @@ class TranscriptTableModel(QAbstractTableModel):
                 return font
         
         elif role == Qt.ItemDataRole.ForegroundRole:
-            # CRITICAL: Set dark text color for highlighted segment (readable in any theme)
+            # CRITICAL: Set contrasting text color for highlighted/colored segments
             if segment.id == self.highlighted_segment_id:
-                return QBrush(QColor("#212121"))  # Dark text on yellow background
+                return QBrush(QColor("#ffffff"))  # White text on orange background
+            if segment.is_bookmarked:
+                return QBrush(QColor("#ffffff"))  # White text on green background
+            # Time column with gaps
+            if self.show_gaps and col == self.COL_TIME:
+                gap = self._get_gap_before_segment(row)
+                if gap >= self.GAP_THRESHOLD:
+                    return QBrush(QColor("#ffffff"))  # White text on blue background
+            if segment.average_confidence < 0.8:
+                return QBrush(QColor("#212121"))  # Dark text on amber background
+            # Time column uses muted color
             if col == self.COL_TIME:
-                return QBrush(QColor("#616161"))
+                return QBrush(QColor("#9e9e9e"))  # Grey that works in both themes
         
         elif role == Qt.ItemDataRole.UserRole:
             # Return segment for custom handling
@@ -320,6 +330,11 @@ class RichTextDelegate(QStyledItemDelegate):
         ctx = QAbstractTextDocumentLayout.PaintContext()
         if option.state & QStyle.StateFlag.State_Selected:
             ctx.palette.setColor(QPalette.ColorRole.Text, option.palette.highlightedText().color())
+        else:
+            # Check if the model specifies a foreground color (e.g., for highlighted segments)
+            fg = index.data(Qt.ItemDataRole.ForegroundRole)
+            if fg and isinstance(fg, QBrush):
+                ctx.palette.setColor(QPalette.ColorRole.Text, fg.color())
         
         self._doc.documentLayout().draw(painter, ctx)
         
@@ -686,7 +701,13 @@ class TranscriptEditor(QWidget):
         """Highlight a segment and scroll to it.
         
         For paginated transcripts, navigates to the correct page first.
+        Skips scrolling if user is currently editing to avoid disrupting their work.
         """
+        # Don't scroll or change pages while user is editing
+        # This prevents the view from jumping around during text input
+        if self.table_view.state() == QAbstractItemView.State.EditingState:
+            return
+        
         # For paginated transcripts, check if we need to change pages
         if self._full_transcript and self._total_pages > 1:
             target_page = self._get_page_for_segment(segment_id)

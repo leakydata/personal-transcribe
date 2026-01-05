@@ -13,6 +13,73 @@ from src.models.transcript import Transcript, format_timestamp, format_timestamp
 from src.export.base_exporter import BaseExporter
 
 
+def sanitize_for_pdf(text: str) -> str:
+    """Convert Unicode characters to ASCII equivalents for PDF compatibility.
+    
+    The built-in PDF fonts (Helvetica, Courier, etc.) only support
+    Latin-1 characters. This function replaces common Unicode characters
+    with their ASCII equivalents.
+    """
+    replacements = {
+        # Dashes
+        '\u2014': '--',   # Em dash
+        '\u2013': '-',    # En dash
+        '\u2012': '-',    # Figure dash
+        '\u2015': '--',   # Horizontal bar
+        
+        # Quotes
+        '\u2018': "'",    # Left single quote
+        '\u2019': "'",    # Right single quote (apostrophe)
+        '\u201C': '"',    # Left double quote
+        '\u201D': '"',    # Right double quote
+        '\u201A': ',',    # Single low-9 quote
+        '\u201E': '"',    # Double low-9 quote
+        '\u2039': '<',    # Single left angle quote
+        '\u203A': '>',    # Single right angle quote
+        '\u00AB': '<<',   # Left double angle quote
+        '\u00BB': '>>',   # Right double angle quote
+        
+        # Ellipsis and dots
+        '\u2026': '...',  # Horizontal ellipsis
+        '\u2022': '*',    # Bullet
+        '\u2023': '>',    # Triangular bullet
+        '\u2043': '-',    # Hyphen bullet
+        
+        # Spaces
+        '\u00A0': ' ',    # Non-breaking space
+        '\u2002': ' ',    # En space
+        '\u2003': ' ',    # Em space
+        '\u2009': ' ',    # Thin space
+        '\u200B': '',     # Zero-width space
+        
+        # Other common
+        '\u00B7': '*',    # Middle dot
+        '\u2010': '-',    # Hyphen
+        '\u2011': '-',    # Non-breaking hyphen
+        '\u2212': '-',    # Minus sign
+        '\u2044': '/',    # Fraction slash
+        '\u00D7': 'x',    # Multiplication sign
+        '\u00F7': '/',    # Division sign
+        '\u2192': '->',   # Right arrow
+        '\u2190': '<-',   # Left arrow
+        '\u00AE': '(R)',  # Registered trademark
+        '\u2122': '(TM)', # Trademark
+        '\u00A9': '(C)',  # Copyright
+    }
+    
+    for unicode_char, ascii_equiv in replacements.items():
+        text = text.replace(unicode_char, ascii_equiv)
+    
+    # For any remaining non-Latin-1 characters, try to encode and replace
+    try:
+        text.encode('latin-1')
+    except UnicodeEncodeError:
+        # Replace any remaining problematic characters
+        text = text.encode('latin-1', errors='replace').decode('latin-1')
+    
+    return text
+
+
 class TranscriptPDF(FPDF):
     """Custom PDF class with header and footer."""
     
@@ -91,7 +158,7 @@ class PDFExporter(BaseExporter):
         
         # Set header text
         if include_header and audio_file:
-            pdf.header_text = os.path.basename(audio_file)
+            pdf.header_text = sanitize_for_pdf(os.path.basename(audio_file))
         
         pdf.add_page()
         
@@ -189,7 +256,7 @@ class PDFExporter(BaseExporter):
             pdf.set_font("Helvetica", "", font_size)
             pdf.set_text_color(0, 0, 0)
             
-            text = segment.display_text
+            text = sanitize_for_pdf(segment.display_text)
             pdf.multi_cell(page_width, line_height, text)
             
             # Add spacing between segments
@@ -202,7 +269,7 @@ class PDFExporter(BaseExporter):
             pdf.cell(0, 8, "Certification", new_x="LMARGIN", new_y="NEXT")
             
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 6, certification_text)
+            pdf.multi_cell(0, 6, sanitize_for_pdf(certification_text))
             
             # Signature line
             pdf.ln(15)
@@ -266,11 +333,11 @@ class PDFExporter(BaseExporter):
             pdf.set_font("Helvetica", "", 10)
             
             if metadata.case_name:
-                pdf.cell(0, 5, f"    {metadata.case_name}", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(0, 5, sanitize_for_pdf(f"    {metadata.case_name}"), new_x="LMARGIN", new_y="NEXT")
             if metadata.case_number:
-                pdf.cell(0, 5, f"    Case No: {metadata.case_number}", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(0, 5, sanitize_for_pdf(f"    Case No: {metadata.case_number}"), new_x="LMARGIN", new_y="NEXT")
             if metadata.client_name:
-                pdf.cell(0, 5, f"    Client: {metadata.client_name}", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(0, 5, sanitize_for_pdf(f"    Client: {metadata.client_name}"), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
         
         # Recording details
@@ -282,16 +349,16 @@ class PDFExporter(BaseExporter):
             date_str = metadata.recording_date
             if metadata.recording_time:
                 date_str += f" at {metadata.recording_time}"
-            pdf.cell(0, 5, f"    Date/Time: {date_str}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 5, sanitize_for_pdf(f"    Date/Time: {date_str}"), new_x="LMARGIN", new_y="NEXT")
         
         if metadata.recording_location:
-            pdf.cell(0, 5, f"    Location: {metadata.recording_location}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 5, sanitize_for_pdf(f"    Location: {metadata.recording_location}"), new_x="LMARGIN", new_y="NEXT")
         
         if metadata.recording_source:
-            pdf.cell(0, 5, f"    Source: {metadata.recording_source}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 5, sanitize_for_pdf(f"    Source: {metadata.recording_source}"), new_x="LMARGIN", new_y="NEXT")
         
         if metadata.original_filename:
-            pdf.cell(0, 5, f"    File: {metadata.original_filename}", new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 5, sanitize_for_pdf(f"    File: {metadata.original_filename}"), new_x="LMARGIN", new_y="NEXT")
         
         if metadata.audio_duration:
             pdf.cell(0, 5, f"    Duration: {metadata.format_duration()}", new_x="LMARGIN", new_y="NEXT")
@@ -305,7 +372,7 @@ class PDFExporter(BaseExporter):
             pdf.set_font("Helvetica", "", 10)
             
             for i, participant in enumerate(metadata.participants, 1):
-                pdf.cell(0, 5, f"    {i}. {participant}", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(0, 5, sanitize_for_pdf(f"    {i}. {participant}"), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
         
         # Transcription info
@@ -315,9 +382,9 @@ class PDFExporter(BaseExporter):
             pdf.set_font("Helvetica", "", 10)
             
             if metadata.transcriptionist:
-                pdf.cell(0, 5, f"    Transcribed by: {metadata.transcriptionist}", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(0, 5, sanitize_for_pdf(f"    Transcribed by: {metadata.transcriptionist}"), new_x="LMARGIN", new_y="NEXT")
             if metadata.transcription_date:
-                pdf.cell(0, 5, f"    Date: {metadata.transcription_date}", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(0, 5, sanitize_for_pdf(f"    Date: {metadata.transcription_date}"), new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
         
         # Notes
@@ -325,7 +392,7 @@ class PDFExporter(BaseExporter):
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 6, "Notes:", new_x="LMARGIN", new_y="NEXT")
             pdf.set_font("Helvetica", "I", 9)
-            pdf.multi_cell(0, 5, f"    {metadata.notes}")
+            pdf.multi_cell(0, 5, sanitize_for_pdf(f"    {metadata.notes}"))
             pdf.ln(2)
         
         # Draw border around metadata section

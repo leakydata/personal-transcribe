@@ -225,25 +225,25 @@ class AudioPlayer(QWidget):
         
         # Play/Pause button
         self.play_button = QPushButton("Play")
-        self.play_button.setFixedWidth(80)
+        self.play_button.setMinimumWidth(80)
         self.play_button.clicked.connect(self.toggle_play)
         controls_layout.addWidget(self.play_button)
         
         # Stop button
         self.stop_button = QPushButton("Stop")
-        self.stop_button.setFixedWidth(60)
+        self.stop_button.setMinimumWidth(70)
         self.stop_button.clicked.connect(self.stop)
         controls_layout.addWidget(self.stop_button)
         
         # Rewind button
         self.rewind_button = QPushButton("<<")
-        self.rewind_button.setFixedWidth(40)
+        self.rewind_button.setMinimumWidth(50)
         self.rewind_button.clicked.connect(lambda: self.skip(-5))
         controls_layout.addWidget(self.rewind_button)
         
         # Forward button
         self.forward_button = QPushButton(">>")
-        self.forward_button.setFixedWidth(40)
+        self.forward_button.setMinimumWidth(50)
         self.forward_button.clicked.connect(lambda: self.skip(5))
         controls_layout.addWidget(self.forward_button)
         
@@ -274,7 +274,7 @@ class AudioPlayer(QWidget):
         # Loop button
         self.loop_button = QPushButton("Loop")
         self.loop_button.setCheckable(True)
-        self.loop_button.setFixedWidth(60)
+        self.loop_button.setMinimumWidth(70)
         self.loop_button.clicked.connect(self._on_loop_toggled)
         controls_layout.addWidget(self.loop_button)
         
