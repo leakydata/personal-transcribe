@@ -29,7 +29,8 @@ from src.ui.find_replace import FindReplaceDialog
 from src.ui.statistics_panel import StatisticsPanel
 from src.ui.metadata_dialog import MetadataDialog
 from src.models.metadata import RecordingMetadata
-from src.ui.transcription_dialog import TranscriptionProgressDialog
+from src.ui.transcription_dialog import TranscriptionProgressDialog, TranscriptionWorkerV2
+from src.ui.transcription_subprocess_dialog import SubprocessTranscriptionDialog
 from src.ui.ai_settings_dialog import AISettingsDialog
 from src.ui.ai_polish_dialog import AIPolishDialog
 from src.utils.logger import get_logger, get_log_file_path, clear_logs, get_log_size, format_size
@@ -802,21 +803,23 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save project:\n{e}")
     
     def start_transcription(self):
-        """Start the transcription process."""
+        """Start the transcription process using subprocess (GPU isolated)."""
         logger.info("=" * 60)
-        logger.info("START_TRANSCRIPTION: Beginning transcription process")
+        logger.info("START_TRANSCRIPTION: Using SUBPROCESS mode (GPU isolated)")
         logger.info("=" * 60)
         
         if not self.current_audio_path:
             QMessageBox.warning(self, "Warning", "Please load an audio file first.")
             return
         
-        logger.debug(f"[STEP 1] Audio path: {self.current_audio_path}")
-        logger.debug(f"[STEP 1] Model: {self.settings.whisper_model}, Device: {self.settings.whisper_device}")
+        logger.info(f"Audio: {self.current_audio_path}")
+        logger.info(f"Model: {self.settings.whisper_model}, Device: {self.settings.whisper_device}")
         
-        # Create and show detailed progress dialog
-        logger.info("[STEP 2] Creating transcription dialog...")
-        dialog = TranscriptionProgressDialog(
+        # Use SUBPROCESS dialog - Whisper runs in separate process
+        # When that process exits, ALL GPU resources are freed by the OS
+        # This completely eliminates the crash-on-load issue
+        
+        dialog = SubprocessTranscriptionDialog(
             audio_path=self.current_audio_path,
             vocabulary=self.vocabulary,
             model_size=self.settings.whisper_model,
@@ -824,74 +827,143 @@ class MainWindow(QMainWindow):
             segment_mode=self.settings.whisper_segment_mode,
             parent=self
         )
-        logger.debug("[STEP 2] Dialog created successfully")
         
-        # Connect signal to capture path
+        # Capture result path when subprocess completes
         result_file_path = None
         def on_complete(file_path: str):
             nonlocal result_file_path
-            logger.info(f"[SIGNAL] on_complete received: {file_path}")
+            logger.info(f"Subprocess complete, file: {file_path}")
             result_file_path = file_path
         
         dialog.transcription_complete.connect(on_complete)
-        logger.debug("[STEP 3] Signal connected")
         
-        logger.info("[STEP 4] Starting transcription dialog (calling start())...")
+        # Start the subprocess
         dialog.start()
         
-        logger.info("[STEP 5] Calling dialog.exec() - BLOCKING until dialog closes...")
-        # BLOCKING CALL - App waits here until dialog closes
+        # Block until dialog closes
         dialog.exec()
-        logger.info("[STEP 6] Dialog exec() returned - dialog has closed")
+        logger.info("Subprocess dialog closed")
         
-        # Capture result before any cleanup
+        # Get result
         final_path = result_file_path
-        logger.info(f"[STEP 7] Captured result path: {final_path}")
         
-        # MINIMAL CLEANUP APPROACH:
-        # The key insight is that recover_transcription works because there's NO worker thread.
-        # We DON'T try to wait for or force-cleanup the worker - that causes crashes.
-        # Instead, we just disconnect signals and let the worker finish naturally in the background.
-        # The streaming file is already saved, so we have everything we need.
-        
-        logger.info("[STEP 8] Minimal cleanup - disconnecting signals only (NOT waiting for worker)...")
-        
-        # Disconnect our signal handler
-        try:
-            dialog.transcription_complete.disconnect(on_complete)
-            logger.debug("[STEP 8] Signal disconnected from our handler")
-        except Exception:
-            pass
-        
-        # Schedule dialog for deletion (Qt will handle it when safe)
-        logger.debug("[STEP 9] Scheduling dialog for deletion (deleteLater)...")
+        # Dialog is just a normal Qt object now - no GPU resources held
+        # Safe to delete immediately
         dialog.deleteLater()
-        logger.debug("[STEP 9] Dialog scheduled for deletion")
         
-        # DO NOT:
-        # - Wait for worker thread (causes crash if thread is stuck)
-        # - Call gc.collect() (crashes if GPU resources still in use by worker)
-        # - Call processEvents() (can trigger callbacks on partially-deleted objects)
-        # - Call dialog.close() (deleteLater handles this)
+        # Load the transcript - this is now SAFE because:
+        # 1. Whisper was NEVER loaded in this process
+        # 2. The subprocess that had Whisper has completely exited
+        # 3. All GPU memory was freed by the OS when subprocess died
         
-        # Instead, just proceed to load the transcript after a delay
-        # The worker will finish naturally and clean itself up
-        
-        logger.info("[STEP 10] Cleanup complete. Worker will finish in background.")
-        
-        # Now load the transcript using the SAME simple approach as recover_transcription
         if final_path and os.path.exists(final_path):
-            logger.info(f"[STEP 11] File exists, scheduling load with 1 second delay: {final_path}")
-            # Use a longer delay (1 second) to give the worker thread time to wind down naturally
-            # This mimics the "user restarts app and recovers" scenario that works reliably
-            QTimer.singleShot(1000, lambda: self._load_completed_transcript(final_path))
-            logger.debug("[STEP 11] Timer scheduled (1000ms)")
+            logger.info(f"Loading transcript from: {final_path}")
+            self._load_transcript_simple(final_path)
         else:
-            logger.warning(f"[STEP 11] No file path or file missing: {final_path}")
-            logger.warning("[STEP 11] Checking for recent transcription files...")
-            self._try_load_recent_transcription()
-        
-        logger.info("[STEP 12] start_transcription() returning - load will happen after delay")
+            logger.warning("No file path received from subprocess")
+            QMessageBox.warning(
+                self,
+                "Transcription Issue",
+                "Transcription process ended but no file was received.\n\n"
+                "Check File > Recover Transcription for any saved transcripts."
+            )
+    
+    def _load_transcript_simple(self, file_path: str):
+        """Load transcript from file - simple and safe (no GPU involved)."""
+        logger.info(f"Loading transcript: {file_path}")
+        try:
+            # Load from JSON file
+            transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+            
+            if transcript:
+                logger.info(f"Loaded {transcript.segment_count} segments, {transcript.word_count} words")
+                
+                # Load into editor
+                self.transcript_editor.load_transcript(transcript)
+                self.statistics_panel.set_transcript(transcript)
+                
+                # Enable actions
+                self._enable_edit_actions(True)
+                self.save_action.setEnabled(True)
+                self.save_as_action.setEnabled(True)
+                self.action_export_transcript.setEnabled(True)
+                self.transcribe_action.setEnabled(True)
+                self.is_modified = True
+                
+                # Show gaps
+                try:
+                    gaps = transcript.get_gaps(threshold=2.0)
+                    if self.audio_player:
+                        self.audio_player.show_gaps(gaps)
+                except Exception as e:
+                    logger.warning(f"Could not show gaps: {e}")
+                
+                self.status_label.setText(
+                    f"Transcription complete: {transcript.segment_count} segments, "
+                    f"{transcript.word_count} words"
+                )
+                
+                # Background autosave
+                self._autosave_transcript_background(transcript)
+                
+                logger.info("Transcript loaded successfully")
+            else:
+                logger.error("load_from_stream_file returned None")
+                QMessageBox.warning(self, "Load Error", "Failed to parse transcript file.")
+                
+        except Exception as e:
+            logger.error(f"Error loading transcript: {e}", exc_info=True)
+            QMessageBox.critical(self, "Load Error", f"Error loading transcript:\n{e}")
+    
+    def _count_segments_in_file(self, file_path: str) -> int:
+        """Quick count of segments in a streaming file."""
+        try:
+            import json
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return len(data.get("segments", []))
+        except Exception:
+            return 0
+    
+    def _recover_specific_file(self, file_path: str):
+        """Load a specific streaming file - uses exact same code as recover_transcription."""
+        logger.info(f"[RECOVER] Loading specific file: {file_path}")
+        try:
+            # This is the EXACT same code from recover_transcription that WORKS
+            from src.ui.transcription_dialog import TranscriptionWorkerV2
+            transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+            
+            if transcript:
+                logger.info(f"[RECOVER] Loaded: {transcript.segment_count} segments")
+                self.transcript_editor.load_transcript(transcript)
+                self.statistics_panel.set_transcript(transcript)
+                self._enable_edit_actions(True)
+                self.save_action.setEnabled(True)
+                self.save_as_action.setEnabled(True)
+                self.action_export_transcript.setEnabled(True)
+                self.transcribe_action.setEnabled(True)
+                self.is_modified = True
+                
+                self.status_label.setText(
+                    f"Loaded {transcript.segment_count} segments, {transcript.word_count} words"
+                )
+                
+                # Start background autosave
+                self._autosave_transcript_background(transcript)
+                
+                logger.info("[RECOVER] Load complete")
+            else:
+                logger.error("[RECOVER] load_from_stream_file returned None")
+                QMessageBox.warning(
+                    self, "Load Failed",
+                    f"Could not load transcript.\n\nUse File > Recover Transcription."
+                )
+        except Exception as e:
+            logger.error(f"[RECOVER] Exception: {e}", exc_info=True)
+            QMessageBox.warning(
+                self, "Load Failed",
+                f"Error loading transcript: {e}\n\nUse File > Recover Transcription."
+            )
     
     def _load_completed_transcript(self, file_path: str):
         """Load completed transcript using the same simple approach as recover_transcription.
@@ -1654,7 +1726,7 @@ class MainWindow(QMainWindow):
         from src.ui.export_dialog import ExportDialog
         dialog = ExportDialog(
             transcript=self.transcript_editor.get_transcript(), # Use transcript_editor to get transcript
-            audio_file=self.audio_file,
+            audio_file=self.current_audio_path,
             metadata=self.metadata,
             parent=self
         )
