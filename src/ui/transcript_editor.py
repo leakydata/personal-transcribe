@@ -205,9 +205,9 @@ class TranscriptTableModel(QAbstractTableModel):
                 gap = self._get_gap_before_segment(row)
                 if gap >= self.GAP_THRESHOLD:
                     return QBrush(QColor("#ffffff"))  # White text on blue background
-            if segment.average_confidence < 0.8:
-                return QBrush(QColor("#212121"))  # Dark text on amber background
-            # Time column uses muted color
+            # Low confidence - DON'T set foreground, let delegate handle it
+            # This ensures text is readable in both light and dark modes
+            # Time column uses muted color (but not for special segments)
             if col == self.COL_TIME:
                 return QBrush(QColor("#9e9e9e"))  # Grey that works in both themes
         
@@ -335,6 +335,17 @@ class RichTextDelegate(QStyledItemDelegate):
             fg = index.data(Qt.ItemDataRole.ForegroundRole)
             if fg and isinstance(fg, QBrush):
                 ctx.palette.setColor(QPalette.ColorRole.Text, fg.color())
+            else:
+                # Detect dark mode by checking background luminance
+                bg_color = option.palette.base().color()
+                # Calculate luminance (0-255 scale, dark = low, light = high)
+                luminance = (bg_color.red() * 299 + bg_color.green() * 587 + bg_color.blue() * 114) / 1000
+                if luminance < 128:
+                    # Dark mode - use light text
+                    ctx.palette.setColor(QPalette.ColorRole.Text, QColor("#eaeaea"))
+                else:
+                    # Light mode - use dark text
+                    ctx.palette.setColor(QPalette.ColorRole.Text, QColor("#212121"))
         
         self._doc.documentLayout().draw(painter, ctx)
         
