@@ -1510,31 +1510,103 @@ class MainWindow(QMainWindow):
     
     def show_shortcuts(self):
         """Show keyboard shortcuts dialog."""
-        shortcuts_text = "Keyboard Shortcuts:\n\n"
+        # Build HTML formatted shortcuts
+        shortcuts_html = """<h2>Keyboard Shortcuts</h2>"""
         
-        for category, shortcuts in Shortcuts.by_category().items():
-            shortcuts_text += f"{category}:\n"
-            for shortcut in shortcuts:
-                shortcuts_text += f"  {shortcut.key_sequence}: {shortcut.description}\n"
-            shortcuts_text += "\n"
+        # Define category order for better organization
+        category_order = ["File", "Playback", "Navigation", "Edit", "Transcription", "View"]
+        categories = Shortcuts.by_category()
         
-        QMessageBox.information(self, "Keyboard Shortcuts", shortcuts_text)
+        for category in category_order:
+            if category in categories:
+                shortcuts_html += f"<h3>{category}</h3><table>"
+                for shortcut in categories[category]:
+                    shortcuts_html += f"<tr><td><b>{shortcut.key_sequence}</b></td><td style='padding-left:20px'>{shortcut.description}</td></tr>"
+                shortcuts_html += "</table><br>"
+        
+        # Add any remaining categories not in the order list
+        for category, shortcuts in categories.items():
+            if category not in category_order:
+                shortcuts_html += f"<h3>{category}</h3><table>"
+                for shortcut in shortcuts:
+                    shortcuts_html += f"<tr><td><b>{shortcut.key_sequence}</b></td><td style='padding-left:20px'>{shortcut.description}</td></tr>"
+                shortcuts_html += "</table><br>"
+        
+        # Additional tips
+        shortcuts_html += """
+        <h3>Tips</h3>
+        <ul>
+            <li>Double-click a segment to edit text</li>
+            <li>Right-click segments for context menu</li>
+            <li>Click waveform to seek to position</li>
+            <li>Drag on waveform to select loop region</li>
+            <li>Use pagination controls for large transcripts</li>
+        </ul>
+        """
+        
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Keyboard Shortcuts")
+        msg.setTextFormat(Qt.TextFormat.RichText)
+        msg.setText(shortcuts_html)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.exec()
     
     def show_about(self):
         """Show about dialog."""
-        QMessageBox.about(
-            self,
-            "About PersonalTranscribe",
-            "PersonalTranscribe v0.1.0\n\n"
-            "A professional voice transcription application with GPU-accelerated "
-            "transcription using OpenAI Whisper.\n\n"
-            "Features:\n"
-            "- Fast transcription with word-level timestamps\n"
-            "- Gap detection for one-sided conversations\n"
-            "- Line-by-line editing with audio sync\n"
-            "- PDF export for legal use\n"
-            "- Custom vocabulary support"
-        )
+        about_text = """<h2>PersonalTranscribe v0.1.0</h2>
+        <p>A professional voice transcription application with GPU-accelerated 
+        transcription using OpenAI Whisper.</p>
+        
+        <h3>Core Features</h3>
+        <ul>
+            <li><b>GPU-Accelerated Transcription</b> - Fast transcription using CUDA</li>
+            <li><b>Word-Level Timestamps</b> - Precise timing for each word</li>
+            <li><b>Subprocess Isolation</b> - Stable GPU resource management</li>
+            <li><b>Crash Recovery</b> - Automatic transcript recovery from streaming files</li>
+        </ul>
+        
+        <h3>Audio Playback</h3>
+        <ul>
+            <li><b>Waveform Visualization</b> - Visual audio navigation</li>
+            <li><b>Variable Speed Playback</b> - 0.5x to 2.0x speed control</li>
+            <li><b>Segment Looping</b> - Loop individual segments for review</li>
+            <li><b>Audio-Text Sync</b> - Highlighted text follows playback</li>
+        </ul>
+        
+        <h3>Editing & Review</h3>
+        <ul>
+            <li><b>In-Place Text Editing</b> - Edit transcripts directly</li>
+            <li><b>Segment Merging/Splitting</b> - Adjust segment boundaries</li>
+            <li><b>Bookmarks</b> - Mark segments for review</li>
+            <li><b>Confidence Highlighting</b> - Visual indicators for uncertain words</li>
+            <li><b>Gap Detection</b> - Shows pauses for one-sided conversations</li>
+        </ul>
+        
+        <h3>Export & Projects</h3>
+        <ul>
+            <li><b>PDF Export</b> - Professional documents with timestamps</li>
+            <li><b>SRT/VTT Export</b> - Subtitle format support</li>
+            <li><b>Project Files</b> - Save and restore complete sessions</li>
+            <li><b>Recording Metadata</b> - Case info, participants, notes</li>
+        </ul>
+        
+        <h3>Customization</h3>
+        <ul>
+            <li><b>Custom Vocabulary</b> - Improve recognition of names/terms</li>
+            <li><b>Dark/Light Themes</b> - Comfortable viewing in any environment</li>
+            <li><b>Configurable Shortcuts</b> - Full keyboard navigation</li>
+            <li><b>Multiple Whisper Models</b> - Balance speed vs accuracy</li>
+        </ul>
+        
+        <p><i>Press Ctrl+? or see Help → Keyboard Shortcuts for all hotkeys.</i></p>
+        """
+        
+        msg = QMessageBox(self)
+        msg.setWindowTitle("About PersonalTranscribe")
+        msg.setTextFormat(Qt.TextFormat.RichText)
+        msg.setText(about_text)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.exec()
     
     def view_logs(self):
         """Open the log file in the default text editor."""
