@@ -992,10 +992,11 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.error(f"Error updating status label: {e}")
             
-            # Use QTimer to delay UI updates
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(500, self._load_transcript_delayed)
-            logger.info("Scheduled delayed loading")
+            # DO NOT schedule load here. 
+            # We wait for autosave to finish first to prevent resource contention.
+            # See _on_autosave_finished implementation.
+            self.status_label.setText("Autosaving project...")
+            logger.info("Waiting for background autosave to complete before loading UI...")
         else:
             self.status_label.setText("Transcription failed")
             logger.error("Transcription finished but transcript object is None")
@@ -1511,12 +1512,24 @@ class MainWindow(QMainWindow):
         dialog = BatchDialog(self)
         dialog.exec()
 
-    def _on_autosave_finished(self, success, result):
-        """Handle completion of background autosave."""
-        if success:
-            logger.info(f"Background autosave successful: {result}")
-        else:
-            logger.error(f"Background autosave failed: {result}")
+    def _on_autosave_finished(self, success, result_path):
+        """Handle autosave completion."""
+        try:
+            if success:
+                logger.info(f"Background autosave finished: {result_path}")
+                # Now that autosave is done, safe to load UI
+                logger.info("Modality serialized: Autosave complete -> Starting UI Load")
+                # Use small timer just to break stack
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(50, self._load_transcript_delayed)
+            else:
+                logger.error(f"Background autosave failed: {result_path}")
+                # Load anyway if autosave failed
+                self._load_transcript_delayed()
+        except Exception as e:
+            logger.error(f"Error in _on_autosave_finished: {e}", exc_info=True)
+            # Fallback
+            self._load_transcript_delayed()
             
     def edit_speakers(self):
         """Open speaker editor dialog."""
