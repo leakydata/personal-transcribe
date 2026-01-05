@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
     QVariant, QPersistentModelIndex, QSize, QRect
 )
 from PyQt6.QtGui import (
-    QColor, QBrush, QFont, QPainter, QTextDocument,
+    QColor, QBrush, QFont, QPainter, QPen, QTextDocument,
     QAbstractTextDocumentLayout, QPalette, QTextOption
 )
 
