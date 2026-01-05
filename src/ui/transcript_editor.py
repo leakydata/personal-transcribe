@@ -285,6 +285,58 @@ class TranscriptTableModel(QAbstractTableModel):
         return -1
 
 
+class TimeColumnDelegate(QStyledItemDelegate):
+    """Delegate for Time column that properly renders background colors.
+    
+    Ensures highlighted segments show their background color even when
+    QSS tries to override it.
+    """
+    
+    def paint(self, painter: QPainter, option, index: QModelIndex):
+        """Paint the cell with proper background color support."""
+        painter.save()
+        
+        # Draw background - check model's BackgroundRole first
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+        else:
+            bg = index.data(Qt.ItemDataRole.BackgroundRole)
+            if bg and isinstance(bg, QBrush):
+                painter.fillRect(option.rect, bg)
+        
+        # Get text and foreground color
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        
+        # Determine text color
+        if option.state & QStyle.StateFlag.State_Selected:
+            text_color = option.palette.highlightedText().color()
+        else:
+            fg = index.data(Qt.ItemDataRole.ForegroundRole)
+            if fg and isinstance(fg, QBrush):
+                text_color = fg.color()
+            else:
+                # Detect dark/light mode from background
+                bg = index.data(Qt.ItemDataRole.BackgroundRole)
+                if bg and isinstance(bg, QBrush):
+                    bg_color = bg.color()
+                else:
+                    bg_color = option.palette.base().color()
+                luminance = (bg_color.red() * 299 + bg_color.green() * 587 + bg_color.blue() * 114) / 1000
+                text_color = QColor("#212121") if luminance >= 128 else QColor("#eaeaea")
+        
+        # Draw text
+        painter.setPen(text_color)
+        font = index.data(Qt.ItemDataRole.FontRole)
+        if font:
+            painter.setFont(font)
+        
+        # Draw with padding
+        text_rect = option.rect.adjusted(8, 4, -8, -4)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        
+        painter.restore()
+
+
 class RichTextDelegate(QStyledItemDelegate):
     """Delegate for displaying and editing text with HTML formatting.
     
@@ -431,6 +483,10 @@ class TranscriptEditor(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table_view.setColumnWidth(0, 180)
+        
+        # Set delegate for Time column (ensures highlighting works)
+        self.time_delegate = TimeColumnDelegate()
+        self.table_view.setItemDelegateForColumn(0, self.time_delegate)
         
         # Set delegate for rich text display and editing
         self.text_delegate = RichTextDelegate()
