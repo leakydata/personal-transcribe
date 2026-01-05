@@ -4,7 +4,9 @@ Background worker for auto-saving transcripts.
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.models.project import ProjectManager, Project
-from src.utils.logger import logger
+from src.utils.logger import get_logger
+
+logger = get_logger("autosave_worker")
 
 class AutosaveWorker(QThread):
     """Worker thread for saving projects in the background."""
