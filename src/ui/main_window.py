@@ -142,12 +142,21 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.save_as_action)
         
         file_menu.addSeparator()
+        # Batch Action
+        self.action_batch_transcribe = QAction(QIcon(), "Batch Transcribe...", self)
+        self.action_batch_transcribe.setStatusTip("Transcribe multiple files sequentially")
+        self.action_batch_transcribe.triggered.connect(self.batch_transcribe)
+        file_menu.addAction(self.action_batch_transcribe)
         
-        self.export_pdf_action = QAction("&Export to PDF...", self)
-        self.export_pdf_action.setShortcut(Shortcuts.EXPORT_PDF.key_sequence)
-        self.export_pdf_action.triggered.connect(self.export_pdf)
-        self.export_pdf_action.setEnabled(False)
-        file_menu.addAction(self.export_pdf_action)
+        file_menu.addSeparator()
+
+        # Export Action
+        self.action_export_transcript = QAction(QIcon(), "Export &Transcript...", self)
+        self.action_export_transcript.setStatusTip("Export transcript to PDF, Word, SRT, or VTT")
+        self.action_export_transcript.triggered.connect(self.export_transcript)
+        self.action_export_transcript.setEnabled(True)
+        self.action_edit_speakers.setEnabled(True)  # Disabled until transcript loaded
+        file_menu.addAction(self.action_export_transcript)
         
         file_menu.addSeparator()
         
@@ -462,7 +471,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.transcribe_action)
         toolbar.addSeparator()
         toolbar.addAction(self.save_action)
-        toolbar.addAction(self.export_pdf_action)
+        toolbar.addAction(self.action_export_transcript)
     
     def _create_statusbar(self):
         """Create status bar."""
@@ -963,10 +972,21 @@ class MainWindow(QMainWindow):
             # Process events again
             QApplication.processEvents()
             
+            # Show gaps in audio player
+            try:
+                gaps = transcript.get_gaps(threshold=2.0)
+                if self.audio_player:
+                    self.audio_player.show_gaps(gaps)
+                    logger.info(f"Visualizing {len(gaps)} silence gaps (>2.0s)")
+            except Exception as e:
+                logger.error(f"Error visualizing gaps: {e}")
+            
             self.save_action.setEnabled(True)
             self.save_as_action.setEnabled(True)
-            self.export_pdf_action.setEnabled(True)
-            self._enable_edit_actions(True)
+            self.action_export_transcript.setEnabled(True)
+            self.action_edit_speakers.setEnabled(True)
+            
+            # Auto-save immediately after load to ensure project file is up to date
             self.is_modified = True
             
             # Store for later use
@@ -1419,6 +1439,43 @@ class MainWindow(QMainWindow):
         )
         dialog.changes_applied.connect(self._on_ai_polish_applied)
         dialog.exec()
+    
+    def export_transcript(self):
+        """Export the transcript to various formats."""
+        if not self.transcript_editor.get_transcript(): # Use transcript_editor to get transcript
+            return
+            
+        from src.ui.export_dialog import ExportDialog
+        dialog = ExportDialog(
+            transcript=self.transcript_editor.get_transcript(), # Use transcript_editor to get transcript
+            audio_file=self.audio_file,
+            metadata=self.metadata,
+            parent=self
+        )
+        dialog.exec()
+    
+    def batch_transcribe(self):
+        """Open batch transcription dialog."""
+        from src.ui.batch_dialog import BatchDialog
+        dialog = BatchDialog(self)
+        dialog.exec()
+
+    def edit_speakers(self):
+        """Open speaker editor dialog."""
+        if not self._pending_transcript and not self.transcript_editor.get_transcript():
+            return
+            
+        transcript = self.transcript_editor.get_transcript()
+        if not transcript:
+            return
+            
+        from src.ui.speaker_editor import SpeakerEditor
+        dialog = SpeakerEditor(transcript, self)
+        if dialog.exec():
+            # Refresh view
+            self.transcript_editor.load_transcript(transcript)
+            self.action_save.setEnabled(True)
+            self.status_label.setText("Speakers updated")
     
     def _on_ai_polish_applied(self):
         """Handle AI polish changes applied."""

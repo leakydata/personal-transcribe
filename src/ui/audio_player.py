@@ -64,6 +64,9 @@ class WaveformWidget(pg.PlotWidget):
         self.segment_region.setVisible(False)
         self.addItem(self.segment_region)
         
+        # Gap regions
+        self.gap_regions = []
+        
         # Taller for better visibility
         self.setFixedHeight(150)
         
@@ -115,6 +118,37 @@ class WaveformWidget(pg.PlotWidget):
     def clear_highlight(self):
         """Clear segment highlight."""
         self.segment_region.setVisible(False)
+
+    def show_gaps(self, gaps: list):
+        """Display gaps on the waveform.
+        
+        Args:
+            gaps: List of tuples (start, end) or Gap objects
+        """
+        self.clear_gaps()
+        
+        for gap in gaps:
+            # Handle both Gap objects and tuples
+            if hasattr(gap, 'start_time') and hasattr(gap, 'end_time'):
+                start, end = gap.start_time, gap.end_time
+            else:
+                start, end = gap
+                
+            region = pg.LinearRegionItem(
+                values=[start, end],
+                brush=pg.mkBrush('#ffcdd280'),  # Light red, semi-transparent
+                pen=pg.mkPen('#ef5350', width=0),  # No border or thin border
+                movable=False
+            )
+            region.setZValue(-10)  # Behind other items
+            self.addItem(region)
+            self.gap_regions.append(region)
+
+    def clear_gaps(self):
+        """Remove all gap regions."""
+        for region in self.gap_regions:
+            self.removeItem(region)
+        self.gap_regions = []
     
     def mousePressEvent(self, event):
         """Handle mouse click to start seeking."""
@@ -341,6 +375,10 @@ class AudioPlayer(QWidget):
     def set_waveform_visible(self, visible: bool):
         """Show or hide the waveform."""
         self.waveform.setVisible(visible)
+
+    def show_gaps(self, gaps: list):
+        """Show gaps on waveform."""
+        self.waveform.show_gaps(gaps)
     
     def _on_duration_changed(self, duration_ms: int):
         """Handle duration change."""
