@@ -66,12 +66,18 @@ class BaseAIProvider(ABC):
         pass
     
     @abstractmethod
-    def polish_text(self, text: str, context: Optional[str] = None) -> PolishResult:
+    def polish_text(
+        self, 
+        text: str, 
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None
+    ) -> PolishResult:
         """Polish a single text segment.
         
         Args:
             text: The text to polish
-            context: Optional context (previous/next segments for coherence)
+            context_before: Optional text from previous segment (for continuity)
+            context_after: Optional text from next segment (for continuity)
             
         Returns:
             PolishResult with original and polished text
@@ -95,7 +101,12 @@ class BaseAIProvider(ABC):
         """
         pass
     
-    def get_polish_prompt(self, text: str, context: Optional[str] = None) -> str:
+    def get_polish_prompt(
+        self, 
+        text: str, 
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None
+    ) -> str:
         """Generate the prompt for polishing text.
         
         This can be overridden by subclasses for provider-specific prompts.
@@ -113,17 +124,25 @@ CRITICAL RULES - YOU MUST FOLLOW THESE EXACTLY:
 YOU MAY ONLY:
 - Add or fix punctuation (periods, commas, question marks, exclamation points)
 - Add parentheses, dashes, or ellipses for clarity
-- Fix capitalization (start of sentences, proper nouns)
+- Fix capitalization (start of sentences, proper nouns IF you are certain)
 - Fix obvious spelling errors ONLY (like "teh" to "the")
+
+IMPORTANT - SENTENCE CONTINUATIONS:
+- If the PREVIOUS SEGMENT ends WITHOUT a period/sentence-ending punctuation, this segment is a CONTINUATION
+- Continuations should NOT start with a capital letter (unless it's a proper noun)
+- Look at the context to determine if this segment starts a new sentence or continues one
 
 The exact words spoken must remain exactly as transcribed. Every word in your output must be present in the input, in the same order.
 
 If you are unsure about anything, leave it unchanged.
 
 """
-        if context:
-            prompt += f"Context (previous text for reference, do not include in output):\n{context}\n\n"
+        if context_before:
+            prompt += f"PREVIOUS SEGMENT (for context - do not include in output):\n\"{context_before}\"\n\n"
         
-        prompt += f"Transcription text to format:\n{text}\n\nFormatted text (same words, only punctuation/capitalization fixed):"
+        if context_after:
+            prompt += f"NEXT SEGMENT (for context - do not include in output):\n\"{context_after}\"\n\n"
+        
+        prompt += f"TEXT TO FORMAT:\n{text}\n\nReturn ONLY the formatted text (same words, only punctuation/capitalization fixed):"
         
         return prompt

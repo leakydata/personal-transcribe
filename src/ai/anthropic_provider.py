@@ -48,13 +48,18 @@ class AnthropicProvider(BaseAIProvider):
             logger.error(f"Anthropic connection test failed: {e}")
             return False, str(e)
     
-    def polish_text(self, text: str, context: Optional[str] = None) -> PolishResult:
+    def polish_text(
+        self, 
+        text: str, 
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None
+    ) -> PolishResult:
         """Polish text using Claude."""
         try:
             import anthropic
             
             client = anthropic.Anthropic(api_key=self.config.api_key)
-            prompt = self.get_polish_prompt(text, context)
+            prompt = self.get_polish_prompt(text, context_before, context_after)
             
             message = client.messages.create(
                 model=self.config.model or "claude-3-haiku-20240307",

@@ -44,7 +44,12 @@ class GeminiProvider(BaseAIProvider):
             logger.error(f"Gemini connection test failed: {e}")
             return False, str(e)
     
-    def polish_text(self, text: str, context: Optional[str] = None) -> PolishResult:
+    def polish_text(
+        self, 
+        text: str, 
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None
+    ) -> PolishResult:
         """Polish text using Gemini."""
         try:
             import google.generativeai as genai
@@ -52,7 +57,7 @@ class GeminiProvider(BaseAIProvider):
             genai.configure(api_key=self.config.api_key)
             model = genai.GenerativeModel(self.config.model or "gemini-1.5-flash")
             
-            prompt = self.get_polish_prompt(text, context)
+            prompt = self.get_polish_prompt(text, context_before, context_after)
             response = model.generate_content(prompt)
             polished = response.text.strip()
             

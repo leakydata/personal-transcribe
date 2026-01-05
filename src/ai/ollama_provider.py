@@ -73,13 +73,18 @@ class OllamaProvider(BaseAIProvider):
             logger.error(f"Ollama connection test failed: {e}")
             return False, str(e)
     
-    def polish_text(self, text: str, context: Optional[str] = None) -> PolishResult:
+    def polish_text(
+        self, 
+        text: str, 
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None
+    ) -> PolishResult:
         """Polish a single text segment using Ollama."""
         import urllib.request
         import urllib.error
         
         try:
-            prompt = self.get_polish_prompt(text, context)
+            prompt = self.get_polish_prompt(text, context_before, context_after)
             
             # Ollama API request
             url = f"{self.base_url}/api/generate"

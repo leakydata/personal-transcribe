@@ -61,12 +61,17 @@ class OpenAIProvider(BaseAIProvider):
             logger.error(f"OpenAI connection test failed: {e}")
             return False, str(e)
     
-    def polish_text(self, text: str, context: Optional[str] = None) -> PolishResult:
+    def polish_text(
+        self, 
+        text: str, 
+        context_before: Optional[str] = None,
+        context_after: Optional[str] = None
+    ) -> PolishResult:
         """Polish a single text segment using OpenAI."""
         try:
             client = self._get_client()
             
-            prompt = self.get_polish_prompt(text, context)
+            prompt = self.get_polish_prompt(text, context_before, context_after)
             
             response = client.chat.completions.create(
                 model=self.config.model or "gpt-4o-mini",

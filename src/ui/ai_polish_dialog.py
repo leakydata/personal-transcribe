@@ -166,9 +166,10 @@ class PolishWorker(QThread):
                 input_tokens = len(text) // 4 + 50  # +50 for prompt overhead
                 total_input_tokens += input_tokens
                 
-                # Use previous segment as context
-                context = self.segments[i - 1] if i > 0 else None
-                result = provider.polish_text(text, context)
+                # Use previous and next segments as context for continuity
+                context_before = self.segments[i - 1] if i > 0 else None
+                context_after = self.segments[i + 1] if i < len(self.segments) - 1 else None
+                result = provider.polish_text(text, context_before, context_after)
                 results.append(result)
                 
                 # Estimate output tokens
