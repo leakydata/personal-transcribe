@@ -818,91 +818,109 @@ class MainWindow(QMainWindow):
             parent=self
         )
         
-        # Store the file path when signal is received (signal now passes path, not object!)
+        # Connect signal to capture path, but don't act on it yet
         result_file_path = None
-        
         def on_complete(file_path: str):
             nonlocal result_file_path
-            logger.info(f"on_complete called with file path: {file_path}")
+            logger.info(f"on_complete signal received with path: {file_path}")
             result_file_path = file_path
         
         self.transcription_dialog.transcription_complete.connect(on_complete)
+        
         logger.info("Starting transcription dialog...")
         self.transcription_dialog.start()
+        
+        # BLOCKING CALL - App waits here until dialog closes
         self.transcription_dialog.exec()
         logger.info("Dialog exec() returned")
         
-        # Dialog closed - clean up completely
-        logger.info("Cleaning up dialog...")
-        dialog = self.transcription_dialog
-        self.transcription_dialog = None
+        # 1. Capture result while dialog object still exists
+        final_path = result_file_path
         
-        if dialog:
-            try:
-                dialog.transcription_complete.disconnect()
-            except:
-                pass
-            dialog.deleteLater()
-        
-        logger.info("Dialog deleted, processing events...")
+        # 2. Aggressive Cleanup of Dialog & Worker
+        logger.info("Cleaning up dialog resources...")
+        try:
+            if self.transcription_dialog:
+                # Disconnect signals
+                try:
+                    self.transcription_dialog.transcription_complete.disconnect()
+                    logger.debug("Disconnected transcription_complete signal")
+                except:
+                    pass
+                
+                # Close if not closed
+                self.transcription_dialog.close()
+                logger.debug("Called dialog.close()")
+                
+                # Schedule deletion
+                self.transcription_dialog.deleteLater()
+                logger.debug("Called dialog.deleteLater()")
+                self.transcription_dialog = None
+        except Exception as e:
+            logger.error(f"Error cleaning up dialog: {e}")
+
+        # 3. Force Event Loop to process the deletion events
+        logger.info("Processing cleanup events...")
         QApplication.processEvents()
+        logger.debug("ProcessEvents complete")
         
-        # Load from the file path we received (or search for recent file as fallback)
-        if result_file_path and os.path.exists(result_file_path):
-            logger.info(f"Loading from received file path: {result_file_path}")
-            self._load_transcript_from_file(result_file_path)
+        # 4. Force Garbage Collection
+        import gc
+        gc.collect()
+        logger.debug("Garbage collection complete")
+        
+        # 5. NOW safe to start loading
+        if final_path and os.path.exists(final_path):
+            logger.info(f"Safe Handoff: Loading from {final_path}")
+            # Use small delay to ensure stack unwind
+            from PyQt6.QtCore import QTimer
+            logger.debug("Scheduling delayed load (200ms)...")
+            QTimer.singleShot(200, lambda: self._load_transcript_from_file(final_path))
         else:
-            logger.warning("No file path received, searching for recent files...")
+            logger.warning("No file path received from dialog, checking recent...")
             self._try_load_recent_transcription()
     
     def _load_transcript_from_file(self, file_path: str):
-        """Load transcript from a streaming JSON file using background worker."""
+        """Load transcript from a streaming JSON file."""
+        # Use a single shot timer to ensure we are completely detached from the previous dialog context
+        # and that the UI has had time to refresh.
+        from PyQt6.QtCore import QTimer
+        logger.debug(f"_load_transcript_from_file called. Scheduling _perform_load_from_file in 500ms for {file_path}")
+        QTimer.singleShot(500, lambda: self._perform_load_from_file(file_path))
+
+    def _perform_load_from_file(self, file_path: str):
+        """Actual loading implementation."""
+        logger.debug(f"_perform_load_from_file starting for {file_path}")
         try:
-            logger.info(f"Initiating background load for: {file_path}")
-            
-            # Update status
-            self.status_label.setText(f"Reading file: {os.path.basename(file_path)}...")
-            
-            # Disable actions during load
+            logger.info(f"Loading transcript file: {file_path}")
+            self.status_label.setText("Reading transcript file...")
             self.transcribe_action.setEnabled(False)
             
-            # Import and start worker
-            from src.ui.transcript_loader_worker import TranscriptLoaderWorker
-            self._loader_worker = TranscriptLoaderWorker(file_path)
-            self._loader_worker.finished.connect(self._on_loader_finished)
-            self._loader_worker.error.connect(self._on_loader_error)
-            self._loader_worker.progress.connect(self._on_loader_progress)
-            self._loader_worker.start()
+            logger.debug("Processing events before load...")
+            QApplication.processEvents()
+
+            from src.ui.transcription_dialog import TranscriptionWorkerV2
             
-        except Exception as e:
-            logger.error(f"Error starting background loader: {e}", exc_info=True)
-            self.status_label.setText("Load failed")
-            self.transcribe_action.setEnabled(True)
-            QMessageBox.critical(self, "Load Error", f"Could not start file loader:\n{e}")
-
-    def _on_loader_progress(self, message: str):
-        """Handle loader progress updates."""
-        self.status_label.setText(message)
-
-    def _on_loader_error(self, error_msg: str):
-        """Handle loader error."""
-        logger.error(f"Loader worker error: {error_msg}")
-        self.status_label.setText("Load failed")
-        self.transcribe_action.setEnabled(True)
-        QMessageBox.warning(self, "Load Error", f"Failed to load transcript:\n{error_msg}")
-
-    def _on_loader_finished(self, transcript):
-        """Handle loader completion."""
-        try:
+            # Use the static method which is robust
+            logger.debug("Calling TranscriptionWorkerV2.load_from_stream_file...")
+            transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+            
             if transcript:
-                logger.info(f"Background load success: {transcript.segment_count} segments")
-                self.status_label.setText(f"Loaded {transcript.segment_count} segments. Updating display...")
+                logger.info(f"Loaded transcript: {len(transcript.segments)} segments")
+                logger.debug("Calling _on_transcription_finished...")
                 self._on_transcription_finished(transcript)
+                logger.debug("_on_transcription_finished returned")
             else:
-                self._on_loader_error("Resulting transcript was empty or None")
+                logger.error("Failed to load transcript from file (returned None)")
+                QMessageBox.warning(self, "Load Error", f"Failed to load transcript from:\n{file_path}")
+                self.transcribe_action.setEnabled(True)
+                
         except Exception as e:
-            logger.error(f"Error handling loaded transcript: {e}", exc_info=True)
-            self._on_loader_error(str(e))
+            logger.error(f"Error loading transcript from file: {e}", exc_info=True)
+            QMessageBox.critical(self, "Load Error", f"Error loading transcript:\n{e}\n\nFile: {file_path}")
+            self.transcribe_action.setEnabled(True)
+        finally:
+            logger.debug("_perform_load_from_file completed")
     
     def _try_load_recent_transcription(self):
         """Try to find and load the most recent transcription file."""
