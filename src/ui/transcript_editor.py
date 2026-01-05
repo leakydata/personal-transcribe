@@ -534,14 +534,14 @@ class TranscriptEditor(QWidget):
         
         # Use plain text delegate instead of rich text delegate
         try:
-            # Create delegate first
-            simple_delegate = QStyledItemDelegate(self)
-            logger.debug("_enable_simple_mode: Created simple delegate")
+            # Create delegate first and PERSIST it to prevent garbage collection
+            self._simple_delegate = QStyledItemDelegate(self)
+            logger.debug("_enable_simple_mode: Created simple delegate (persisted)")
             
             # Apply delegate
             self.table_view.setItemDelegateForColumn(
                 TranscriptTableModel.COL_TEXT, 
-                simple_delegate
+                self._simple_delegate
             )
             logger.debug("_enable_simple_mode: Applied simple delegate")
         except Exception as e:
