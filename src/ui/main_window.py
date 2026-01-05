@@ -650,6 +650,20 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load project:\n{e}")
     
+    def _update_window_title(self):
+        """Update window title to show modified state."""
+        title = self.windowTitle()
+        
+        # Remove existing modified indicator if present
+        if title.endswith(" *"):
+            title = title[:-2]
+        
+        # Add modified indicator if needed
+        if self.is_modified and not title.endswith(" *"):
+            self.setWindowTitle(title + " *")
+        else:
+            self.setWindowTitle(title)
+    
     def recover_transcription(self):
         """Recover transcription from streaming/autosave files."""
         import os

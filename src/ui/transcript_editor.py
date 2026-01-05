@@ -444,23 +444,43 @@ class RichTextDelegate(QStyledItemDelegate):
         )
     
     def createEditor(self, parent, option, index):
-        """Create plain text editor for editing."""
-        editor = QLineEdit(parent)
-        editor.setFrame(False)
-        # Add padding to prevent text cutoff at bottom
-        editor.setStyleSheet("padding: 4px 2px; margin: 2px 0;")
-        # Use a slightly larger minimum height
-        editor.setMinimumHeight(30)
+        """Create multi-line text editor with word wrapping."""
+        editor = QTextEdit(parent)
+        editor.setFrameStyle(QFrame.Shape.NoFrame)
+        editor.setWordWrapMode(QTextOption.WrapMode.WordWrap)
+        editor.setAcceptRichText(False)  # Plain text only
+        # Style for visibility
+        editor.setStyleSheet("""
+            QTextEdit {
+                padding: 4px;
+                background-color: palette(base);
+                color: palette(text);
+            }
+        """)
+        # Set minimum height based on row height
+        editor.setMinimumHeight(option.rect.height())
         return editor
     
     def setEditorData(self, editor, index):
         """Set editor with plain text (not HTML)."""
         value = index.model().data(index, Qt.ItemDataRole.EditRole)
-        editor.setText(str(value) if value else "")
+        editor.setPlainText(str(value) if value else "")
+        # Move cursor to end
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.setTextCursor(cursor)
     
     def setModelData(self, editor, model, index):
         """Save plain text back to model."""
-        model.setData(index, editor.text(), Qt.ItemDataRole.EditRole)
+        model.setData(index, editor.toPlainText(), Qt.ItemDataRole.EditRole)
+    
+    def updateEditorGeometry(self, editor, option, index):
+        """Make the editor fill the cell properly."""
+        # Expand the editor to be at least the cell height, or larger for multi-line
+        rect = option.rect
+        # Add some extra height for comfortable editing
+        min_height = max(rect.height(), 100)
+        editor.setGeometry(rect.x(), rect.y(), rect.width(), min_height)
 
 
 class TranscriptEditor(QWidget):
