@@ -834,50 +834,31 @@ class MainWindow(QMainWindow):
         self.transcription_dialog.exec()
         logger.info("Dialog exec() returned")
         
-        # 1. Capture result while dialog object still exists
+        # 1. Capture result
         final_path = result_file_path
         
-        # 2. Aggressive Cleanup of Dialog & Worker
-        logger.info("Cleaning up dialog resources...")
-        try:
-            if self.transcription_dialog:
-                # Disconnect signals
-                try:
-                    self.transcription_dialog.transcription_complete.disconnect()
-                    logger.debug("Disconnected transcription_complete signal")
-                except:
-                    pass
-                
-                # Close if not closed
-                self.transcription_dialog.close()
-                logger.debug("Called dialog.close()")
-                
-                # Schedule deletion
-                self.transcription_dialog.deleteLater()
-                logger.debug("Called dialog.deleteLater()")
-                self.transcription_dialog = None
-        except Exception as e:
-            logger.error(f"Error cleaning up dialog: {e}")
-
-        # 3. Force Event Loop to process the deletion events
-        logger.info("Processing cleanup events...")
-        QApplication.processEvents()
-        logger.debug("ProcessEvents complete")
+        # 2. Schedule deletion (Standard Qt way)
+        # Do NOT force cleanup with processEvents() or gc.collect() as this can cause SegFaults
+        # if the C++ object is still winding down.
+        if self.transcription_dialog:
+            try:
+                self.transcription_dialog.transcription_complete.disconnect()
+            except:
+                pass
+            self.transcription_dialog.deleteLater()
+            self.transcription_dialog = None
+            
+        logger.info("Dialog completion handled. Scheduled deletion.")
         
-        # 4. Force Garbage Collection
-        import gc
-        gc.collect()
-        logger.debug("Garbage collection complete")
-        
-        # 5. NOW safe to start loading
+        # 3. Schedule Load on next loop iteration
+        # We use a timer to let the current callback finish and the stack unwind completely.
         if final_path and os.path.exists(final_path):
-            logger.info(f"Safe Handoff: Loading from {final_path}")
-            # Use small delay to ensure stack unwind
+            logger.info(f"Scheduling load for: {final_path}")
+            # 500ms delay to let the event loop process the deleteLater event naturally
             from PyQt6.QtCore import QTimer
-            logger.debug("Scheduling delayed load (200ms)...")
-            QTimer.singleShot(200, lambda: self._load_transcript_from_file(final_path))
+            QTimer.singleShot(500, lambda: self._load_transcript_from_file(final_path))
         else:
-            logger.warning("No file path received from dialog, checking recent...")
+            logger.warning("No file path received, checking recent...")
             self._try_load_recent_transcription()
     
     def _load_transcript_from_file(self, file_path: str):
@@ -885,31 +866,31 @@ class MainWindow(QMainWindow):
         # Use a single shot timer to ensure we are completely detached from the previous dialog context
         # and that the UI has had time to refresh.
         from PyQt6.QtCore import QTimer
-        logger.debug(f"_load_transcript_from_file called. Scheduling _perform_load_from_file in 500ms for {file_path}")
+        logger.info(f"_load_transcript_from_file called. Scheduling _perform_load_from_file in 500ms for {file_path}")
         QTimer.singleShot(500, lambda: self._perform_load_from_file(file_path))
 
     def _perform_load_from_file(self, file_path: str):
         """Actual loading implementation."""
-        logger.debug(f"_perform_load_from_file starting for {file_path}")
+        logger.info(f"_perform_load_from_file starting for {file_path}")
         try:
             logger.info(f"Loading transcript file: {file_path}")
             self.status_label.setText("Reading transcript file...")
             self.transcribe_action.setEnabled(False)
             
-            logger.debug("Processing events before load...")
+            # Optional: safe processEvents call here now that we are in a fresh tick
             QApplication.processEvents()
 
             from src.ui.transcription_dialog import TranscriptionWorkerV2
             
             # Use the static method which is robust
-            logger.debug("Calling TranscriptionWorkerV2.load_from_stream_file...")
+            logger.info("Calling TranscriptionWorkerV2.load_from_stream_file...")
             transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
             
             if transcript:
                 logger.info(f"Loaded transcript: {len(transcript.segments)} segments")
-                logger.debug("Calling _on_transcription_finished...")
+                logger.info("Calling _on_transcription_finished...")
                 self._on_transcription_finished(transcript)
-                logger.debug("_on_transcription_finished returned")
+                logger.info("_on_transcription_finished returned")
             else:
                 logger.error("Failed to load transcript from file (returned None)")
                 QMessageBox.warning(self, "Load Error", f"Failed to load transcript from:\n{file_path}")
