@@ -155,7 +155,6 @@ class MainWindow(QMainWindow):
         self.action_export_transcript.setStatusTip("Export transcript to PDF, Word, SRT, or VTT")
         self.action_export_transcript.triggered.connect(self.export_transcript)
         self.action_export_transcript.setEnabled(True)
-        self.action_edit_speakers.setEnabled(True)  # Disabled until transcript loaded
         file_menu.addAction(self.action_export_transcript)
         
         file_menu.addSeparator()
@@ -188,6 +187,15 @@ class MainWindow(QMainWindow):
         self.redo_action = self.undo_stack.createRedoAction(self, "&Redo")
         self.redo_action.setShortcut(Shortcuts.REDO.key_sequence)
         edit_menu.addAction(self.redo_action)
+        
+        edit_menu.addSeparator()
+        
+        # Speaker Editor
+        self.action_edit_speakers = QAction("Edit &Speakers...", self)
+        self.action_edit_speakers.setStatusTip("Manage and rename speakers")
+        self.action_edit_speakers.triggered.connect(self.edit_speakers)
+        self.action_edit_speakers.setEnabled(False)
+        edit_menu.addAction(self.action_edit_speakers)
         
         edit_menu.addSeparator()
         
@@ -930,12 +938,13 @@ class MainWindow(QMainWindow):
             # This ensures we never lose transcription work even if display crashes
             autosave_path = None
             try:
-                logger.info("Attempting autosave...")
-                autosave_path = self._autosave_transcript(transcript)
-                if autosave_path:
-                    logger.info(f"Transcript auto-saved to: {autosave_path}")
-                else:
-                    logger.warning("Autosave returned None (failed gracefully)")
+                # logger.info("Attempting autosave...")
+                # autosave_path = self._autosave_transcript(transcript)
+                # if autosave_path:
+                #     logger.info(f"Transcript auto-saved to: {autosave_path}")
+                # else:
+                #     logger.warning("Autosave returned None (failed gracefully)")
+                logger.info("Skipping immediate autosave to prevent potential crash on large files. Streaming file exists as backup.")
             except Exception as e:
                 logger.error(f"CRASH PREVENTION: Autosave failed with error: {e}", exc_info=True)
             
