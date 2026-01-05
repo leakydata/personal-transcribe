@@ -8,15 +8,19 @@ A professional voice transcription application built with Python, featuring GPU-
 
 - **Whisper Transcription**: Uses faster-whisper with selectable models (tiny to large-v3)
 - **GPU Acceleration**: NVIDIA CUDA support for 10-15x faster transcription
+- **Subprocess Architecture**: Transcription runs in an isolated process for stability
 - **Word-Level Timestamps**: Precise timing for each word with confidence scores
 - **Gap Detection**: Shows when the other party is speaking (gaps in your audio)
 - **Line-by-Line Editing**: Edit transcriptions with synchronized audio playback
 - **Custom Vocabulary**: Add special names and terms for accurate spelling
-- **AI Polishing**: Clean up transcripts using OpenAI, Ollama, or other AI providers
+- **AI Polishing**: Clean up transcripts using OpenAI, Ollama, Anthropic, Google Gemini, or DeepSeek
 - **Recording Metadata**: Add case info, participants, and notes for legal proceedings
-- **Multiple Export Formats**: PDF, Word (.docx), SRT subtitles
+- **Multiple Export Formats**: PDF, Word (.docx), SRT subtitles, VTT
 - **Crash Recovery**: Streaming transcription to disk ensures you never lose work
 - **Project Save/Load**: Save your work and continue later
+- **Segment Merging**: Combine segments that were incorrectly split
+- **Speaker Labels**: Assign speakers to segments for multi-party recordings
+- **Bookmarks**: Mark important segments for easy navigation
 
 ## Whisper Models
 
@@ -132,26 +136,74 @@ PersonalTranscribe/
     main.py                 # Application entry point
     pyproject.toml          # UV dependencies
     environment.yml         # Conda environment
+    clean_pycache.ps1       # Utility to clean Python cache
     src/
-        ai/                 # AI providers (OpenAI, Ollama, etc.)
-        config/             # Settings and shortcuts
-        export/             # PDF/DOCX/SRT exporters
-        models/             # Data structures
-        transcription/      # Whisper engine
+        ai/                 # AI providers (OpenAI, Anthropic, Ollama, Gemini, DeepSeek)
+        config/             # Settings and keyboard shortcuts
+        export/             # PDF/DOCX/SRT/VTT exporters
+        models/             # Data structures (Transcript, Segment, Word)
+        transcription/      # Whisper engine and subprocess runner
+            whisper_engine.py       # Direct Whisper integration
+            transcribe_process.py   # Standalone subprocess for GPU isolation
         ui/                 # PyQt6 widgets
+            main_window.py              # Main application window
+            transcript_editor.py        # Transcript display and editing
+            transcription_dialog.py     # Progress dialog (threaded mode)
+            transcription_subprocess_dialog.py  # Progress dialog (subprocess mode)
+            audio_player.py             # Waveform and playback
+            export_dialog.py            # Export options
+            ai_polish_dialog.py         # AI transcript cleaning
         utils/              # Logging utilities
     resources/
-        vocabulary.txt      # Custom words
-        themes/             # UI themes (light/dark)
+        vocabulary.txt      # Custom words for accurate transcription
+        themes/             # UI themes (light.qss, dark.qss)
 ```
 
 ## AI Polishing Setup
 
-To use AI transcript polishing:
+AI polishing cleans up transcripts by fixing grammar, punctuation, and filler words while preserving the original meaning.
 
-1. **OpenAI**: Get an API key from [platform.openai.com](https://platform.openai.com)
-2. **Ollama** (free, local): Install from [ollama.ai](https://ollama.ai), then `ollama pull llama3.2`
-3. Configure in: AI > AI Settings
+### Supported Providers
+
+| Provider | Type | Setup |
+|----------|------|-------|
+| **Ollama** | Local, Free | Install from [ollama.ai](https://ollama.ai), run `ollama pull llama3.2` |
+| **OpenAI** | Cloud, Paid | Get API key from [platform.openai.com](https://platform.openai.com) |
+| **Anthropic** | Cloud, Paid | Get API key from [console.anthropic.com](https://console.anthropic.com) |
+| **Google Gemini** | Cloud, Free tier | Get API key from [makersuite.google.com](https://makersuite.google.com) |
+| **DeepSeek** | Cloud, Cheap | Get API key from [platform.deepseek.com](https://platform.deepseek.com) |
+
+Configure providers in: **AI > AI Settings**
+
+### Polish Modes
+
+- **All Segments**: Polish the entire transcript
+- **Selected Segments**: Only polish highlighted segments
+- **Time Range**: Polish segments within a specific time range
+
+## Technical Architecture
+
+### Subprocess Transcription
+
+PersonalTranscribe uses a **subprocess architecture** for transcription stability:
+
+1. **Main Process**: Runs the PyQt6 GUI - never loads Whisper/CUDA
+2. **Subprocess**: Spawned to run transcription in complete isolation
+3. **Communication**: Progress sent via stdout as JSON, transcript saved to disk
+4. **Cleanup**: When subprocess exits, OS reclaims ALL GPU memory automatically
+
+This architecture ensures:
+- GUI never freezes during transcription
+- GPU memory is always properly released
+- Crashes in transcription don't take down the UI
+- Long transcriptions (1+ hours) are stable
+
+### Streaming to Disk
+
+During transcription, segments are saved to disk every 50 segments:
+- Location: `%LOCALAPPDATA%\PersonalTranscribe\streaming\`
+- Format: JSON with full word-level timestamps
+- If anything fails, use **File > Recover Transcription**
 
 ## Troubleshooting
 
@@ -161,14 +213,24 @@ To use AI transcript polishing:
 - The app will fall back to CPU if GPU fails
 
 ### Transcription is slow
-- MP3 files are converted to WAV automatically (adds ~10 seconds)
+- Compressed audio (MP3, M4A) is converted to WAV automatically (adds ~10 seconds)
 - CPU transcription is ~10x slower than GPU
 - Try a smaller model: Transcription > Whisper Model > Small
 
-### App crashes on large files
-- Transcription streams to disk - use File > Recover Transcription
-- The app uses simplified display for large transcripts (>100 segments)
-- Check Help > View Log File for error details
+### Subprocess crashes on long files
+- The transcript is saved periodically - use **File > Recover Transcription**
+- Check `%LOCALAPPDATA%\PersonalTranscribe\streaming\` for partial transcripts
+- Even if subprocess crashes, completed segments are preserved
+
+### App uses too much memory
+- Large transcripts (1000+ segments) use pagination automatically
+- Each page shows 100 segments to reduce memory usage
+- Use the page navigation buttons at the bottom of the transcript
+
+### Export fails
+- Ensure you have a transcript loaded
+- Check that the audio file path is still valid
+- Try saving the project first, then exporting
 
 ## Credits
 
