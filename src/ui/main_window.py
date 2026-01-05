@@ -856,30 +856,53 @@ class MainWindow(QMainWindow):
             self._try_load_recent_transcription()
     
     def _load_transcript_from_file(self, file_path: str):
-        """Load transcript from a streaming JSON file."""
+        """Load transcript from a streaming JSON file using background worker."""
         try:
-            from src.ui.transcription_dialog import TranscriptionWorkerV2
-            logger.info(f"Loading transcript from: {file_path}")
-            transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+            logger.info(f"Initiating background load for: {file_path}")
+            
+            # Update status
+            self.status_label.setText(f"Reading file: {os.path.basename(file_path)}...")
+            
+            # Disable actions during load
+            self.transcribe_action.setEnabled(False)
+            
+            # Import and start worker
+            from src.ui.transcript_loader_worker import TranscriptLoaderWorker
+            self._loader_worker = TranscriptLoaderWorker(file_path)
+            self._loader_worker.finished.connect(self._on_loader_finished)
+            self._loader_worker.error.connect(self._on_loader_error)
+            self._loader_worker.progress.connect(self._on_loader_progress)
+            self._loader_worker.start()
+            
+        except Exception as e:
+            logger.error(f"Error starting background loader: {e}", exc_info=True)
+            self.status_label.setText("Load failed")
+            self.transcribe_action.setEnabled(True)
+            QMessageBox.critical(self, "Load Error", f"Could not start file loader:\n{e}")
+
+    def _on_loader_progress(self, message: str):
+        """Handle loader progress updates."""
+        self.status_label.setText(message)
+
+    def _on_loader_error(self, error_msg: str):
+        """Handle loader error."""
+        logger.error(f"Loader worker error: {error_msg}")
+        self.status_label.setText("Load failed")
+        self.transcribe_action.setEnabled(True)
+        QMessageBox.warning(self, "Load Error", f"Failed to load transcript:\n{error_msg}")
+
+    def _on_loader_finished(self, transcript):
+        """Handle loader completion."""
+        try:
             if transcript:
-                logger.info(f"Loaded transcript: {len(transcript.segments)} segments")
+                logger.info(f"Background load success: {transcript.segment_count} segments")
+                self.status_label.setText(f"Loaded {transcript.segment_count} segments. Updating display...")
                 self._on_transcription_finished(transcript)
             else:
-                logger.error("Failed to load transcript from file")
-                QMessageBox.warning(
-                    self,
-                    "Load Error",
-                    f"Failed to load transcript from:\n{file_path}"
-                )
-                self.transcribe_action.setEnabled(True)
+                self._on_loader_error("Resulting transcript was empty or None")
         except Exception as e:
-            logger.error(f"Error loading transcript from file: {e}", exc_info=True)
-            QMessageBox.warning(
-                self,
-                "Load Error", 
-                f"Error loading transcript:\n{e}\n\nFile: {file_path}"
-            )
-            self.transcribe_action.setEnabled(True)
+            logger.error(f"Error handling loaded transcript: {e}", exc_info=True)
+            self._on_loader_error(str(e))
     
     def _try_load_recent_transcription(self):
         """Try to find and load the most recent transcription file."""
