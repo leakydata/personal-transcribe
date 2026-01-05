@@ -524,24 +524,38 @@ class TranscriptEditor(QWidget):
         """Enable simplified display mode for large transcripts."""
         if self._simple_mode:
             return
-        
+            
+        logger.debug("_enable_simple_mode: Starting")
         self._simple_mode = True
         
         # Disable confidence highlighting (uses expensive HTML rendering)
         self.model.show_confidence_highlighting = False
+        logger.debug("_enable_simple_mode: Disabled confidence highlighting")
         
         # Use plain text delegate instead of rich text delegate
-        self.table_view.setItemDelegateForColumn(
-            TranscriptTableModel.COL_TEXT, 
-            QStyledItemDelegate(self)
-        )
+        try:
+            # Create delegate first
+            simple_delegate = QStyledItemDelegate(self)
+            logger.debug("_enable_simple_mode: Created simple delegate")
+            
+            # Apply delegate
+            self.table_view.setItemDelegateForColumn(
+                TranscriptTableModel.COL_TEXT, 
+                simple_delegate
+            )
+            logger.debug("_enable_simple_mode: Applied simple delegate")
+        except Exception as e:
+            logger.error(f"_enable_simple_mode: Error setting delegate: {e}", exc_info=True)
+            raise
         
         # Use larger fixed row height for readability with wrapped text
         self.table_view.verticalHeader().setDefaultSectionSize(120)
+        logger.debug("_enable_simple_mode: Set row height")
         
         # Keep word wrap enabled for readability
         self.table_view.setWordWrap(True)
         self.table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
+        logger.debug("_enable_simple_mode: Completed")
     
     def _disable_simple_mode(self):
         """Disable simplified display mode (restore rich text)."""
