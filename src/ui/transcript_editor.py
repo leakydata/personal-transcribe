@@ -478,6 +478,7 @@ class TranscriptEditor(QWidget):
         self._current_page = 0
         self._total_pages = 1
         self._full_transcript: Optional[Transcript] = None  # Store full transcript
+        self._pending_highlight: Optional[str] = None  # Segment ID to highlight after editing
         self._init_ui()
     
     def _init_ui(self):
@@ -521,6 +522,9 @@ class TranscriptEditor(QWidget):
         # Connect signals
         self.table_view.clicked.connect(self._on_row_clicked)
         self.model.dataChanged.connect(self._on_data_changed)
+        
+        # Connect to delegate's closeEditor to apply pending highlight after editing
+        self.text_delegate.closeEditor.connect(self._on_editor_closed)
         
         # Context menu for segment operations
         self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -794,23 +798,28 @@ class TranscriptEditor(QWidget):
         """Highlight a segment and scroll to it.
         
         For paginated transcripts, navigates to the correct page first.
-        Skips scrolling if user is currently editing to avoid disrupting their work.
+        Skips all updates if user is currently editing to avoid disrupting their work.
         """
         is_editing = self.table_view.state() == QAbstractItemView.State.EditingState
         
+        # If editing, DON'T update anything - this prevents the editor from closing
+        # The highlight will catch up when editing finishes
+        if is_editing:
+            # Just store the pending highlight - it will be applied when editing ends
+            self._pending_highlight = segment_id
+            return
+        
+        # Clear any pending highlight
+        self._pending_highlight = None
+        
         # For paginated transcripts, check if we need to change pages
-        # (but don't change pages while editing)
-        if not is_editing and self._full_transcript and self._total_pages > 1:
+        if self._full_transcript and self._total_pages > 1:
             target_page = self._get_page_for_segment(segment_id)
             if target_page != self._current_page:
                 self._load_page(target_page)
         
-        # ALWAYS update the model's highlight - this makes the row visually highlighted
+        # Update the model's highlight - this makes the row visually highlighted
         self.model.highlight_segment(segment_id)
-        
-        # Only scroll if not editing
-        if is_editing:
-            return
         
         # Scroll to segment
         row = self.model.get_row_for_segment(segment_id)
@@ -839,6 +848,14 @@ class TranscriptEditor(QWidget):
             segment = self.model.get_segment_at_row(top_left.row())
             if segment:
                 self.segment_edited.emit(segment)
+    
+    def _on_editor_closed(self, editor, hint):
+        """Handle editor closed - apply any pending highlight."""
+        if self._pending_highlight:
+            segment_id = self._pending_highlight
+            self._pending_highlight = None
+            # Apply the pending highlight now that editing is done
+            self.model.highlight_segment(segment_id)
     
     def set_show_confidence(self, show: bool):
         """Enable or disable confidence highlighting."""
