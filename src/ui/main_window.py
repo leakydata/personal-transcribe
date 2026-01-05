@@ -934,34 +934,65 @@ class MainWindow(QMainWindow):
             logger.error(f"Error enabling action: {e}")
         
         if transcript:
-            # CRITICAL: Auto-save transcript to disk IMMEDIATELY before any UI work
-            # This ensures we never lose transcription work even if display crashes
-            autosave_path = None
+            # CRITICAL: Auto-save transcript in BACKGROUND to ensure we don't block the UI
             try:
-                # logger.info("Attempting autosave...")
-                # autosave_path = self._autosave_transcript(transcript)
-                # if autosave_path:
-                #     logger.info(f"Transcript auto-saved to: {autosave_path}")
-                # else:
-                #     logger.warning("Autosave returned None (failed gracefully)")
-                logger.info("Skipping immediate autosave to prevent potential crash on large files. Streaming file exists as backup.")
+                # Prepare autosave path and project (lightweight operations)
+                import os
+                from datetime import datetime
+                from src.models.project import Project
+                
+                # Ensure directory
+                autosave_dir = os.path.join(
+                    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                    "PersonalTranscribe",
+                    "autosave"
+                )
+                os.makedirs(autosave_dir, exist_ok=True)
+                
+                # Name file
+                if self.current_audio_path:
+                    base_name = os.path.splitext(os.path.basename(self.current_audio_path))[0]
+                else:
+                    base_name = "transcript"
+                
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                autosave_path = os.path.join(autosave_dir, f"{base_name}_{timestamp}.ptproj")
+                
+                # Create Project object
+                project = Project(
+                    audio_file=self.current_audio_path or "",
+                    transcript=transcript,
+                    vocabulary=self.vocabulary,
+                    title=f"Auto-saved: {base_name}",
+                    notes=f"Auto-saved at {datetime.now().isoformat()}",
+                    metadata=self.metadata
+                )
+                
+                # Start Background Worker
+                from src.ui.autosave_worker import AutosaveWorker
+                self._autosave_worker = AutosaveWorker(project, autosave_path)
+                # Keep reference to worker so it doesn't get GC'd
+                self._autosave_worker.finished.connect(self._on_autosave_finished)
+                self._autosave_worker.start()
+                
+                logger.info(f"Started background autosave to: {autosave_path}")
+                self._pending_autosave_path = autosave_path
+                
             except Exception as e:
-                logger.error(f"CRASH PREVENTION: Autosave failed with error: {e}", exc_info=True)
+                logger.error(f"Failed to initiate background autosave: {e}", exc_info=True)
             
             # Store transcript for delayed loading
             self._pending_transcript = transcript
-            self._pending_autosave_path = autosave_path
             
             try:
-                # Update status immediately
+                # Update status
                 self.status_label.setText(
                     f"Loading transcript: {transcript.segment_count} segments..."
                 )
             except Exception as e:
                 logger.error(f"Error updating status label: {e}")
             
-            # Use QTimer to delay UI updates - prevents crashes from rapid Qt updates
-            # Increased delay to give Qt's event loop more time to settle
+            # Use QTimer to delay UI updates
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(500, self._load_transcript_delayed)
             logger.info("Scheduled delayed loading")
@@ -1485,6 +1516,13 @@ class MainWindow(QMainWindow):
         dialog = BatchDialog(self)
         dialog.exec()
 
+    def _on_autosave_finished(self, success, result):
+        """Handle completion of background autosave."""
+        if success:
+            logger.info(f"Background autosave successful: {result}")
+        else:
+            logger.error(f"Background autosave failed: {result}")
+            
     def edit_speakers(self):
         """Open speaker editor dialog."""
         if not self._pending_transcript and not self.transcript_editor.get_transcript():
