@@ -174,9 +174,7 @@ class TranscriptTableModel(QAbstractTableModel):
                 return segment.display_text
         
         elif role == Qt.ItemDataRole.BackgroundRole:
-            # Highlight current segment - use bright coral/orange for visibility in all themes
-            if segment.id == self.highlighted_segment_id:
-                return QBrush(QColor("#ff6b35"))  # Bright orange - highly visible
+            # Current segment uses BORDER now, not fill - so skip it here
             # Highlight bookmarked segments
             if segment.is_bookmarked:
                 return QBrush(QColor("#4caf50"))  # Green - visible in both themes
@@ -195,9 +193,8 @@ class TranscriptTableModel(QAbstractTableModel):
                 return font
         
         elif role == Qt.ItemDataRole.ForegroundRole:
-            # CRITICAL: Set contrasting text color for highlighted/colored segments
-            if segment.id == self.highlighted_segment_id:
-                return QBrush(QColor("#ffffff"))  # White text on orange background
+            # CRITICAL: Set contrasting text color for colored segments
+            # (highlighted segment uses border now, so no special text color needed)
             if segment.is_bookmarked:
                 return QBrush(QColor("#ffffff"))  # White text on green background
             # Time column with gaps
@@ -219,6 +216,10 @@ class TranscriptTableModel(QAbstractTableModel):
             # Return HTML with confidence highlighting
             if col == self.COL_TEXT:
                 return get_word_confidence_html(segment, self.show_confidence_highlighting)
+        
+        elif role == Qt.ItemDataRole.UserRole + 2:
+            # Return True if this is the currently highlighted (playing) segment
+            return segment.id == self.highlighted_segment_id
         
         return None
     
@@ -289,12 +290,15 @@ class TimeColumnDelegate(QStyledItemDelegate):
     """Delegate for Time column that properly renders background colors.
     
     Ensures highlighted segments show their background color even when
-    QSS tries to override it.
+    QSS tries to override it. Uses orange BORDER for currently playing segment.
     """
     
     def paint(self, painter: QPainter, option, index: QModelIndex):
         """Paint the cell with proper background color support."""
         painter.save()
+        
+        # Check if this is the currently highlighted (playing) segment
+        is_highlighted = index.data(Qt.ItemDataRole.UserRole + 2) or False
         
         # Draw background - check model's BackgroundRole first
         if option.state & QStyle.StateFlag.State_Selected:
@@ -303,6 +307,15 @@ class TimeColumnDelegate(QStyledItemDelegate):
             bg = index.data(Qt.ItemDataRole.BackgroundRole)
             if bg and isinstance(bg, QBrush):
                 painter.fillRect(option.rect, bg)
+        
+        # Draw orange border for highlighted (playing) segment
+        if is_highlighted and not (option.state & QStyle.StateFlag.State_Selected):
+            pen = QPen(QColor("#ff6b35"))  # Bright orange
+            pen.setWidth(3)
+            painter.setPen(pen)
+            # Draw border inside the rect (adjusted to not clip)
+            border_rect = option.rect.adjusted(1, 1, -2, -2)
+            painter.drawRect(border_rect)
         
         # Get text and foreground color
         text = index.data(Qt.ItemDataRole.DisplayRole) or ""
