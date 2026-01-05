@@ -4,8 +4,9 @@ A professional voice transcription application built with Python, featuring GPU-
 
 > **Note**: This project was pair-programmed using [Cursor](https://cursor.sh/) with Claude Opus 4.5 by Anthropic.
 
-| <a href="https://github.com/user-attachments/assets/04bf2449-6036-46e3-a934-4a991edf1e5d"><img src="https://github.com/user-attachments/assets/04bf2449-6036-46e3-a934-4a991edf1e5d" width="400" alt="Transcription Interface" /></a> | <a href="https://github.com/user-attachments/assets/548a4e68-8fa2-4338-972c-2b8c30ed70a1"><img src="https://github.com/user-attachments/assets/548a4e68-8fa2-4338-972c-2b8c30ed70a1" width="400" alt="Settings Interface" /></a> |
+| Light / Visual Version | Dark Mode (Toggle with `Ctrl+D`) |
 | :---: | :---: |
+| <a href="https://github.com/user-attachments/assets/04bf2449-6036-46e3-a934-4a991edf1e5d"><img src="https://github.com/user-attachments/assets/04bf2449-6036-46e3-a934-4a991edf1e5d" width="400" alt="Light Mode Interface" /></a> | <a href="https://github.com/user-attachments/assets/548a4e68-8fa2-4338-972c-2b8c30ed70a1"><img src="https://github.com/user-attachments/assets/548a4e68-8fa2-4338-972c-2b8c30ed70a1" width="400" alt="Dark Mode Interface" /></a> |
 
 ## Features
 
