@@ -980,15 +980,34 @@ class TranscriptionProgressDialog(QDialog):
     
     def closeEvent(self, event):
         """Handle close event."""
+        logger.debug("TranscriptionProgressDialog.closeEvent called")
         self.elapsed_timer.stop()
         
-        if self.worker and self.worker.isRunning():
-            # Request cancellation but don't block waiting
-            self.worker.cancel()
-            # Give it a very short time to respond (100ms)
-            if not self.worker.wait(100):
-                # Thread still running - it will finish in background
-                # This is okay, the thread will clean up after itself
+        if self.worker:
+            if self.worker.isRunning():
+                logger.warning("Worker thread is still running during close. requesting cancel...")
+                # Request cancellation
+                self.worker.cancel()
+                
+                # Wait for thread to finish gracefully (up to 2s)
+                logger.debug("Waiting for worker thread to finish (timeout 2s)...")
+                if self.worker.wait(2000):
+                    logger.debug("Worker thread finished gracefully")
+                else:
+                    logger.warning("Worker thread did not finish in time. Detaching.")
+                    # We can't terminate() safely in Python usually.
+                    # Ideally we would block, but we don't want to freeze UI totally.
+            else:
+                logger.debug("Worker thread was already finished")
+            
+            # Unhook signals to prevent post-death calls
+            try:
+                self.worker.log_message.disconnect()
+                self.worker.progress.disconnect()
+                self.worker.finished.disconnect()
+                self.worker.error.disconnect()
+            except:
                 pass
         
+        logger.debug("Accepting close event")
         event.accept()
