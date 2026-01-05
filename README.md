@@ -4,6 +4,8 @@ A professional voice transcription application built with Python, featuring GPU-
 
 > **Note**: This project was pair-programmed using [Cursor](https://cursor.sh/) with Claude Opus 4.5 by Anthropic.
 
+<img width="1921" height="1051" alt="image" src="https://github.com/user-attachments/assets/04bf2449-6036-46e3-a934-4a991edf1e5d" />
+
 ## Features
 
 - **Whisper Transcription**: Uses faster-whisper with selectable models (tiny to large-v3)
