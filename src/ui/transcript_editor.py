@@ -344,6 +344,10 @@ class RichTextDelegate(QStyledItemDelegate):
         """Create plain text editor for editing."""
         editor = QLineEdit(parent)
         editor.setFrame(False)
+        # Add padding to prevent text cutoff at bottom
+        editor.setStyleSheet("padding: 4px 2px; margin: 2px 0;")
+        # Use a slightly larger minimum height
+        editor.setMinimumHeight(30)
         return editor
     
     def setEditorData(self, editor, index):
@@ -385,8 +389,8 @@ class TranscriptEditor(QWidget):
         self.table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_view.verticalHeader().setVisible(True)
-        self.table_view.verticalHeader().setDefaultSectionSize(80)
-        self.table_view.verticalHeader().setMinimumSectionSize(50)
+        self.table_view.verticalHeader().setDefaultSectionSize(100)
+        self.table_view.verticalHeader().setMinimumSectionSize(60)
         self.table_view.setWordWrap(True)
         
         # Enable text elide mode for the table
@@ -549,7 +553,7 @@ class TranscriptEditor(QWidget):
             raise
         
         # Use larger fixed row height for readability with wrapped text
-        self.table_view.verticalHeader().setDefaultSectionSize(120)
+        self.table_view.verticalHeader().setDefaultSectionSize(140)
         logger.debug("_enable_simple_mode: Set row height")
         
         # Keep word wrap enabled for readability
@@ -571,7 +575,7 @@ class TranscriptEditor(QWidget):
         self.table_view.setItemDelegateForColumn(1, self.text_delegate)
         
         # Restore settings
-        self.table_view.verticalHeader().setDefaultSectionSize(80)
+        self.table_view.verticalHeader().setDefaultSectionSize(100)
         self.table_view.setWordWrap(True)
         self.table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
     

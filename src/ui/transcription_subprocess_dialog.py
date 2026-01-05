@@ -279,18 +279,20 @@ class SubprocessTranscriptionDialog(QDialog):
         """Handle subprocess completion."""
         self.elapsed_timer.stop()
         
-        logger.info(f"Subprocess finished with exit code {exit_code}")
-        
         # Check if output file exists and is complete, even if process crashed
         # The subprocess might crash during cleanup AFTER saving the file
         file_is_complete = self._check_output_file_complete()
         
         if file_is_complete:
-            if exit_code != 0:
-                self._log(f"Subprocess crashed during cleanup (exit {exit_code}), but transcription completed!", "warning")
-                self._log("File was saved before crash - loading anyway.", "success")
+            # Success! Don't show any scary messages even if exit code is non-zero
+            # The crash happens during GPU cleanup AFTER the work is done
+            if exit_code == 0:
+                logger.info("Subprocess finished successfully")
+                self._log("Transcription complete! GPU resources released.", "success")
             else:
-                self._log("Subprocess exited cleanly. GPU resources freed.", "success")
+                # Log at debug level only - users don't need to see this
+                logger.debug(f"Subprocess exited with code {exit_code} after completing transcription (normal GPU cleanup)")
+                self._log("Transcription complete!", "success")
             
             self.stage_label.setText("Complete! Ready to load.")
             self.cancel_button.setEnabled(False)
@@ -299,12 +301,14 @@ class SubprocessTranscriptionDialog(QDialog):
             # Emit the file path - the file is good!
             self.transcription_complete.emit(self.output_path)
         else:
-            self._log(f"Subprocess exited with code {exit_code}", "warning")
+            # Actual failure - file is not complete
+            logger.warning(f"Subprocess exited with code {exit_code}, file not complete")
+            self._log(f"Process ended (code {exit_code})", "warning")
             
             # Check if there's a partial file we can still use
             if self.output_path and os.path.exists(self.output_path):
-                self._log("Partial transcript may be available in the output file.", "info")
-                self._log("You can try File > Recover Transcription.", "info")
+                self._log("Partial transcript may be available.", "info")
+                self._log("Try File > Recover Transcription.", "info")
             
             self.stage_label.setText("Process ended")
             self.cancel_button.setEnabled(False)
@@ -334,7 +338,12 @@ class SubprocessTranscriptionDialog(QDialog):
             return False
     
     def _on_process_error(self, error):
-        """Handle process error."""
+        """Handle process error.
+        
+        Note: For 'Crashed' errors, we defer judgment until _on_process_finished
+        because the subprocess often crashes during GPU cleanup AFTER completing
+        the transcription successfully. We check if the file is complete there.
+        """
         error_strings = {
             QProcess.ProcessError.FailedToStart: "Failed to start",
             QProcess.ProcessError.Crashed: "Process crashed",
@@ -344,6 +353,16 @@ class SubprocessTranscriptionDialog(QDialog):
             QProcess.ProcessError.UnknownError: "Unknown error",
         }
         error_msg = error_strings.get(error, f"Error {error}")
+        
+        # For crash errors, check if the file is already complete
+        # This happens when GPU cleanup crashes after successful transcription
+        if error == QProcess.ProcessError.Crashed:
+            if self._check_output_file_complete():
+                # File is complete - this is just a cleanup crash, not a real error
+                logger.debug(f"Subprocess crashed during cleanup, but transcription completed successfully")
+                return  # Don't show any error to user
+        
+        # For other errors or incomplete files, log the error
         self._log(f"Process error: {error_msg}", "error")
         logger.error(f"Subprocess error: {error_msg}")
     
