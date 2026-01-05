@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QMenuBar, QMenu, QToolBar, QStatusBar, QFileDialog,
     QMessageBox, QProgressDialog, QLabel, QApplication,
-    QDockWidget, QInputDialog
+    QDockWidget, QInputDialog, QDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QUndoStack, QActionGroup, QIcon
@@ -639,7 +639,7 @@ class MainWindow(QMainWindow):
             self.transcribe_action.setEnabled(bool(self.current_audio_path))
             self.save_action.setEnabled(True)
             self.save_as_action.setEnabled(True)
-            self.export_pdf_action.setEnabled(bool(project.transcript))
+            self.action_export_transcript.setEnabled(bool(project.transcript))
             
             self.settings_manager.add_recent_file(file_path)
             self._update_recent_menu()
@@ -735,7 +735,7 @@ class MainWindow(QMainWindow):
                     self._enable_edit_actions(True)
                     self.save_action.setEnabled(True)
                     self.save_as_action.setEnabled(True)
-                    self.export_pdf_action.setEnabled(True)
+                    self.action_export_transcript.setEnabled(True)
                     self.is_modified = True
                     
                     QMessageBox.information(
@@ -803,13 +803,20 @@ class MainWindow(QMainWindow):
     
     def start_transcription(self):
         """Start the transcription process."""
+        logger.info("=" * 60)
+        logger.info("START_TRANSCRIPTION: Beginning transcription process")
+        logger.info("=" * 60)
+        
         if not self.current_audio_path:
             QMessageBox.warning(self, "Warning", "Please load an audio file first.")
             return
         
+        logger.debug(f"[STEP 1] Audio path: {self.current_audio_path}")
+        logger.debug(f"[STEP 1] Model: {self.settings.whisper_model}, Device: {self.settings.whisper_device}")
+        
         # Create and show detailed progress dialog
-        logger.info("Creating transcription dialog...")
-        self.transcription_dialog = TranscriptionProgressDialog(
+        logger.info("[STEP 2] Creating transcription dialog...")
+        dialog = TranscriptionProgressDialog(
             audio_path=self.current_audio_path,
             vocabulary=self.vocabulary,
             model_size=self.settings.whisper_model,
@@ -817,91 +824,216 @@ class MainWindow(QMainWindow):
             segment_mode=self.settings.whisper_segment_mode,
             parent=self
         )
+        logger.debug("[STEP 2] Dialog created successfully")
         
-        # Connect signal to capture path, but don't act on it yet
+        # Connect signal to capture path
         result_file_path = None
         def on_complete(file_path: str):
             nonlocal result_file_path
-            logger.info(f"on_complete signal received with path: {file_path}")
+            logger.info(f"[SIGNAL] on_complete received: {file_path}")
             result_file_path = file_path
         
-        self.transcription_dialog.transcription_complete.connect(on_complete)
+        dialog.transcription_complete.connect(on_complete)
+        logger.debug("[STEP 3] Signal connected")
         
-        logger.info("Starting transcription dialog...")
-        self.transcription_dialog.start()
+        logger.info("[STEP 4] Starting transcription dialog (calling start())...")
+        dialog.start()
         
+        logger.info("[STEP 5] Calling dialog.exec() - BLOCKING until dialog closes...")
         # BLOCKING CALL - App waits here until dialog closes
-        self.transcription_dialog.exec()
-        logger.info("Dialog exec() returned")
+        dialog.exec()
+        logger.info("[STEP 6] Dialog exec() returned - dialog has closed")
         
-        # 1. Capture result
+        # Capture result before any cleanup
         final_path = result_file_path
+        logger.info(f"[STEP 7] Captured result path: {final_path}")
         
-        # 2. Schedule deletion (Standard Qt way)
-        # Do NOT force cleanup with processEvents() or gc.collect() as this can cause SegFaults
-        # if the C++ object is still winding down.
-        if self.transcription_dialog:
-            try:
-                self.transcription_dialog.transcription_complete.disconnect()
-            except:
-                pass
-            self.transcription_dialog.deleteLater()
-            self.transcription_dialog = None
-            
-        logger.info("Dialog completion handled. Scheduled deletion.")
+        # MINIMAL CLEANUP APPROACH:
+        # The key insight is that recover_transcription works because there's NO worker thread.
+        # We DON'T try to wait for or force-cleanup the worker - that causes crashes.
+        # Instead, we just disconnect signals and let the worker finish naturally in the background.
+        # The streaming file is already saved, so we have everything we need.
         
-        # 3. Schedule Load on next loop iteration
-        # We use a timer to let the current callback finish and the stack unwind completely.
-        if final_path and os.path.exists(final_path):
-            logger.info(f"Scheduling load for: {final_path}")
-            # 500ms delay to let the event loop process the deleteLater event naturally
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(500, lambda: self._load_transcript_from_file(final_path))
-        else:
-            logger.warning("No file path received, checking recent...")
-            self._try_load_recent_transcription()
-    
-    def _load_transcript_from_file(self, file_path: str):
-        """Load transcript from a streaming JSON file."""
-        # Use a single shot timer to ensure we are completely detached from the previous dialog context
-        # and that the UI has had time to refresh.
-        from PyQt6.QtCore import QTimer
-        logger.info(f"_load_transcript_from_file called. Scheduling _perform_load_from_file in 500ms for {file_path}")
-        QTimer.singleShot(500, lambda: self._perform_load_from_file(file_path))
-
-    def _perform_load_from_file(self, file_path: str):
-        """Actual loading implementation."""
-        logger.info(f"_perform_load_from_file starting for {file_path}")
+        logger.info("[STEP 8] Minimal cleanup - disconnecting signals only (NOT waiting for worker)...")
+        
+        # Disconnect our signal handler
         try:
-            logger.info(f"Loading transcript file: {file_path}")
-            self.status_label.setText("Reading transcript file...")
-            self.transcribe_action.setEnabled(False)
+            dialog.transcription_complete.disconnect(on_complete)
+            logger.debug("[STEP 8] Signal disconnected from our handler")
+        except Exception:
+            pass
+        
+        # Schedule dialog for deletion (Qt will handle it when safe)
+        logger.debug("[STEP 9] Scheduling dialog for deletion (deleteLater)...")
+        dialog.deleteLater()
+        logger.debug("[STEP 9] Dialog scheduled for deletion")
+        
+        # DO NOT:
+        # - Wait for worker thread (causes crash if thread is stuck)
+        # - Call gc.collect() (crashes if GPU resources still in use by worker)
+        # - Call processEvents() (can trigger callbacks on partially-deleted objects)
+        # - Call dialog.close() (deleteLater handles this)
+        
+        # Instead, just proceed to load the transcript after a delay
+        # The worker will finish naturally and clean itself up
+        
+        logger.info("[STEP 10] Cleanup complete. Worker will finish in background.")
+        
+        # Now load the transcript using the SAME simple approach as recover_transcription
+        if final_path and os.path.exists(final_path):
+            logger.info(f"[STEP 11] File exists, scheduling load with 1 second delay: {final_path}")
+            # Use a longer delay (1 second) to give the worker thread time to wind down naturally
+            # This mimics the "user restarts app and recovers" scenario that works reliably
+            QTimer.singleShot(1000, lambda: self._load_completed_transcript(final_path))
+            logger.debug("[STEP 11] Timer scheduled (1000ms)")
+        else:
+            logger.warning(f"[STEP 11] No file path or file missing: {final_path}")
+            logger.warning("[STEP 11] Checking for recent transcription files...")
+            self._try_load_recent_transcription()
+        
+        logger.info("[STEP 12] start_transcription() returning - load will happen after delay")
+    
+    def _load_completed_transcript(self, file_path: str):
+        """Load completed transcript using the same simple approach as recover_transcription.
+        
+        This method intentionally mirrors the recover_transcription flow which is known to work.
+        """
+        logger.info("=" * 60)
+        logger.info("LOAD_COMPLETED_TRANSCRIPT: Starting")
+        logger.info("=" * 60)
+        logger.info(f"[LOAD 1] File path: {file_path}")
+        
+        try:
+            logger.debug("[LOAD 2] Updating status label...")
+            self.status_label.setText("Loading transcript...")
+            logger.debug("[LOAD 2] Status label updated")
             
-            # Optional: safe processEvents call here now that we are in a fresh tick
-            QApplication.processEvents()
-
+            # Load from streaming JSON - same as recover_transcription
+            logger.info("[LOAD 3] Importing TranscriptionWorkerV2...")
             from src.ui.transcription_dialog import TranscriptionWorkerV2
+            logger.debug("[LOAD 3] Import successful")
             
-            # Use the static method which is robust
-            logger.info("Calling TranscriptionWorkerV2.load_from_stream_file...")
+            logger.info("[LOAD 4] Calling load_from_stream_file()...")
             transcript = TranscriptionWorkerV2.load_from_stream_file(file_path)
+            logger.info(f"[LOAD 4] load_from_stream_file returned: {transcript is not None}")
             
             if transcript:
-                logger.info(f"Loaded transcript: {len(transcript.segments)} segments")
-                logger.info("Calling _on_transcription_finished...")
-                self._on_transcription_finished(transcript)
-                logger.info("_on_transcription_finished returned")
+                logger.info(f"[LOAD 5] Transcript loaded: {transcript.segment_count} segments, {transcript.word_count} words")
+                
+                # Load into editor - EXACTLY like recover_transcription does
+                logger.info("[LOAD 6] Loading transcript into editor...")
+                self.transcript_editor.load_transcript(transcript)
+                logger.info("[LOAD 6] Transcript loaded into editor successfully")
+                
+                # Update statistics panel
+                logger.debug("[LOAD 7] Updating statistics panel...")
+                self.statistics_panel.set_transcript(transcript)
+                logger.debug("[LOAD 7] Statistics panel updated")
+                
+                # Enable actions
+                logger.debug("[LOAD 8] Enabling actions...")
+                self._enable_edit_actions(True)
+                self.save_action.setEnabled(True)
+                self.save_as_action.setEnabled(True)
+                self.action_export_transcript.setEnabled(True)
+                self.transcribe_action.setEnabled(True)
+                self.is_modified = True
+                logger.debug("[LOAD 8] Actions enabled")
+                
+                # Show gaps in audio player
+                logger.debug("[LOAD 9] Visualizing gaps...")
+                try:
+                    gaps = transcript.get_gaps(threshold=2.0)
+                    if self.audio_player:
+                        self.audio_player.show_gaps(gaps)
+                        logger.info(f"[LOAD 9] Visualized {len(gaps)} silence gaps (>2.0s)")
+                    else:
+                        logger.debug("[LOAD 9] No audio player available")
+                except Exception as e:
+                    logger.error(f"[LOAD 9] Error visualizing gaps: {e}")
+                
+                logger.debug("[LOAD 10] Updating status label with final message...")
+                self.status_label.setText(
+                    f"Transcription complete: {transcript.segment_count} segments, "
+                    f"{transcript.word_count} words"
+                )
+                logger.debug("[LOAD 10] Status label updated")
+                
+                # Auto-save in background (non-blocking)
+                logger.debug("[LOAD 11] Starting background autosave...")
+                self._autosave_transcript_background(transcript)
+                logger.debug("[LOAD 11] Background autosave started")
+                
+                logger.info("[LOAD 12] _load_completed_transcript completed successfully")
+                logger.info("=" * 60)
             else:
-                logger.error("Failed to load transcript from file (returned None)")
+                logger.error("[LOAD FAIL] Failed to load transcript from file (returned None)")
                 QMessageBox.warning(self, "Load Error", f"Failed to load transcript from:\n{file_path}")
                 self.transcribe_action.setEnabled(True)
                 
         except Exception as e:
-            logger.error(f"Error loading transcript from file: {e}", exc_info=True)
+            logger.error(f"[LOAD EXCEPTION] Error loading transcript: {e}", exc_info=True)
             QMessageBox.critical(self, "Load Error", f"Error loading transcript:\n{e}\n\nFile: {file_path}")
             self.transcribe_action.setEnabled(True)
-        finally:
-            logger.debug("_perform_load_from_file completed")
+    
+    def _autosave_transcript_background(self, transcript: Transcript):
+        """Start background autosave (non-blocking, fire-and-forget)."""
+        logger.debug("[AUTOSAVE] Starting background autosave setup...")
+        try:
+            import os
+            from datetime import datetime
+            from src.models.project import Project
+            from src.ui.autosave_worker import AutosaveWorker
+            
+            autosave_dir = os.path.join(
+                os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+                "PersonalTranscribe",
+                "autosave"
+            )
+            os.makedirs(autosave_dir, exist_ok=True)
+            logger.debug(f"[AUTOSAVE] Directory: {autosave_dir}")
+            
+            if self.current_audio_path:
+                base_name = os.path.splitext(os.path.basename(self.current_audio_path))[0]
+            else:
+                base_name = "transcript"
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            autosave_path = os.path.join(autosave_dir, f"{base_name}_{timestamp}.ptproj")
+            logger.debug(f"[AUTOSAVE] Path: {autosave_path}")
+            
+            logger.debug("[AUTOSAVE] Creating Project object...")
+            project = Project(
+                audio_file=self.current_audio_path or "",
+                transcript=transcript,
+                vocabulary=self.vocabulary,
+                title=f"Auto-saved: {base_name}",
+                notes=f"Auto-saved at {datetime.now().isoformat()}",
+                metadata=self.metadata
+            )
+            logger.debug("[AUTOSAVE] Project object created")
+            
+            # Start background worker (keep reference so it doesn't get GC'd)
+            logger.debug("[AUTOSAVE] Creating AutosaveWorker...")
+            self._autosave_worker = AutosaveWorker(project, autosave_path)
+            self._autosave_worker.finished.connect(
+                lambda success, path: logger.info(f"[AUTOSAVE DONE] {'Succeeded' if success else 'Failed'}: {path}")
+            )
+            logger.debug("[AUTOSAVE] Starting worker thread...")
+            self._autosave_worker.start()
+            
+            logger.info(f"[AUTOSAVE] Background autosave worker started: {autosave_path}")
+            
+        except Exception as e:
+            logger.error(f"[AUTOSAVE ERROR] Failed to start background autosave: {e}", exc_info=True)
+    
+    def _load_transcript_from_file(self, file_path: str):
+        """Legacy method - redirects to new implementation."""
+        self._load_completed_transcript(file_path)
+
+    def _perform_load_from_file(self, file_path: str):
+        """Legacy method - redirects to new implementation."""
+        self._load_completed_transcript(file_path)
     
     def _try_load_recent_transcription(self):
         """Try to find and load the most recent transcription file."""
