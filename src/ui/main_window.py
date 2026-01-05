@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QDockWidget, QInputDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QAction, QKeySequence, QUndoStack, QActionGroup
+from PyQt6.QtGui import QAction, QKeySequence, QUndoStack, QActionGroup, QIcon
 
 from src.config.settings import get_settings, get_settings_manager
 from src.config.shortcuts import Shortcuts
@@ -919,30 +919,46 @@ class MainWindow(QMainWindow):
     
     def _on_transcription_finished(self, transcript: Transcript):
         """Handle transcription completion."""
-        self.transcribe_action.setEnabled(True)
+        logger.info("_on_transcription_finished started")
+        try:
+            self.transcribe_action.setEnabled(True)
+        except Exception as e:
+            logger.error(f"Error enabling action: {e}")
         
         if transcript:
             # CRITICAL: Auto-save transcript to disk IMMEDIATELY before any UI work
             # This ensures we never lose transcription work even if display crashes
-            autosave_path = self._autosave_transcript(transcript)
-            if autosave_path:
-                logger.info(f"Transcript auto-saved to: {autosave_path}")
+            autosave_path = None
+            try:
+                logger.info("Attempting autosave...")
+                autosave_path = self._autosave_transcript(transcript)
+                if autosave_path:
+                    logger.info(f"Transcript auto-saved to: {autosave_path}")
+                else:
+                    logger.warning("Autosave returned None (failed gracefully)")
+            except Exception as e:
+                logger.error(f"CRASH PREVENTION: Autosave failed with error: {e}", exc_info=True)
             
             # Store transcript for delayed loading
             self._pending_transcript = transcript
             self._pending_autosave_path = autosave_path
             
-            # Update status immediately
-            self.status_label.setText(
-                f"Loading transcript: {transcript.segment_count} segments..."
-            )
+            try:
+                # Update status immediately
+                self.status_label.setText(
+                    f"Loading transcript: {transcript.segment_count} segments..."
+                )
+            except Exception as e:
+                logger.error(f"Error updating status label: {e}")
             
             # Use QTimer to delay UI updates - prevents crashes from rapid Qt updates
             # Increased delay to give Qt's event loop more time to settle
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(500, self._load_transcript_delayed)
+            logger.info("Scheduled delayed loading")
         else:
             self.status_label.setText("Transcription failed")
+            logger.error("Transcription finished but transcript object is None")
     
     def _load_transcript_delayed(self):
         """Load transcript into UI with delay to prevent crashes."""
