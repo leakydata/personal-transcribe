@@ -467,7 +467,8 @@ class TranscriptEditor(QWidget):
         self.table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_view.verticalHeader().setVisible(True)
-        self.table_view.verticalHeader().setDefaultSectionSize(100)
+        # Auto-resize rows to fit content (multi-line text)
+        self.table_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table_view.verticalHeader().setMinimumSectionSize(60)
         self.table_view.setWordWrap(True)
         
@@ -634,8 +635,8 @@ class TranscriptEditor(QWidget):
             logger.error(f"_enable_simple_mode: Error setting delegate: {e}", exc_info=True)
             raise
         
-        # Use larger fixed row height for readability with wrapped text
-        self.table_view.verticalHeader().setDefaultSectionSize(140)
+        # Auto-resize rows to fit content
+        self.table_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         logger.debug("_enable_simple_mode: Set row height")
         
         # Keep word wrap enabled for readability
@@ -656,8 +657,8 @@ class TranscriptEditor(QWidget):
         # Restore rich text delegate
         self.table_view.setItemDelegateForColumn(1, self.text_delegate)
         
-        # Restore settings
-        self.table_view.verticalHeader().setDefaultSectionSize(100)
+        # Restore settings - auto-resize rows to fit content
+        self.table_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table_view.setWordWrap(True)
         self.table_view.setTextElideMode(Qt.TextElideMode.ElideNone)
     
