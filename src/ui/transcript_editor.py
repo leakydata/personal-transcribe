@@ -368,6 +368,9 @@ class RichTextDelegate(QStyledItemDelegate):
         if html is None:
             html = index.data(Qt.ItemDataRole.DisplayRole) or ""
         
+        # Check if this is the currently highlighted (playing) segment
+        is_highlighted = index.data(Qt.ItemDataRole.UserRole + 2) or False
+        
         # Setup painter
         painter.save()
         
@@ -378,6 +381,15 @@ class RichTextDelegate(QStyledItemDelegate):
             bg = index.data(Qt.ItemDataRole.BackgroundRole)
             if bg:
                 painter.fillRect(option.rect, bg)
+        
+        # Draw orange border for highlighted (playing) segment
+        if is_highlighted and not (option.state & QStyle.StateFlag.State_Selected):
+            pen = QPen(QColor("#ff6b35"))  # Bright orange
+            pen.setWidth(3)
+            painter.setPen(pen)
+            # Draw border inside the rect (adjusted to not clip)
+            border_rect = option.rect.adjusted(1, 1, -2, -2)
+            painter.drawRect(border_rect)
         
         # Setup document for HTML rendering
         self._doc.setHtml(html)
