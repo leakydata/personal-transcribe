@@ -889,27 +889,46 @@ class TranscriptionProgressDialog(QDialog):
     def _on_finished(self, transcript):
         """Handle transcription complete."""
         self.elapsed_timer.stop()
+        self.progress_bar.setValue(100)
+        self.stage_label.setText("Finalizing...")
+        
+        # Store results for the delayed handler
+        self._result_transcript = transcript
+        
+        # Schedule cleanup and emission on the next main loop iteration
+        # This allows the worker thread signal to complete fully before we do heavy UI work or close
+        QTimer.singleShot(200, self._finalize_and_close)
+
+    def _finalize_and_close(self):
+        """Safely finalize the dialog and emit results."""
+        transcript = getattr(self, '_result_transcript', None)
+        
         self.cancel_button.setEnabled(False)
         self.force_close_button.setVisible(False)
         self.close_button.setEnabled(True)
-        self.progress_bar.setValue(100)
         
-        # Get the streaming file path from the worker - emit path, not object!
+        # Get the streaming file path
         file_path = ""
         if self.worker:
             file_path = getattr(self.worker, '_stream_file_path', "") or ""
-        
+            
         if transcript and file_path:
             logger.info(f"Transcription dialog emitting file path: {file_path}")
-            logger.info(f"Transcript has {len(transcript.segments)} segments")
             try:
-                # Emit file path instead of object to avoid cross-thread issues
                 self.transcription_complete.emit(file_path)
                 logger.debug("File path emitted successfully")
+                
+                # Auto-close the dialog on success so the main window can proceed
+                # Schedule this slightly later to ensure the signal is processed
+                self.stage_label.setText("Complete! Closing...")
+                QTimer.singleShot(500, self.accept)
+                
             except Exception as e:
                 logger.error(f"Error emitting file path: {e}", exc_info=True)
+                self.stage_label.setText("Error finalizing")
         elif transcript:
             logger.warning("Transcription complete but no streaming file path available")
+            self.stage_label.setText("Complete (No saved file)")
     
     def _on_error(self, error_message: str):
         """Handle error."""
