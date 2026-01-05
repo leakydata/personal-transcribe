@@ -470,35 +470,51 @@ class TranscriptEditor(QWidget):
         try:
             segment_count = len(transcript.segments)
             logger.info(f"Loading transcript with {segment_count} segments")
-        
-        # Store full transcript for pagination
-        self._full_transcript = transcript
-        self._current_page = 0
-        
-        # Calculate pages
-        self._total_pages = max(1, (segment_count + self.SEGMENTS_PER_PAGE - 1) // self.SEGMENTS_PER_PAGE)
-        
-        # CRITICAL: For large transcripts, use pagination and simplified display
-        if segment_count > LARGE_TRANSCRIPT_THRESHOLD:
-            logger.info(f"Large transcript - enabling pagination ({self._total_pages} pages)")
-            self._enable_simple_mode()
-            self._show_pagination(True)
-            self._update_pagination_controls()
-            # Load first page only
-            self._load_page(0)
-        else:
-            self._disable_simple_mode()
-            self._show_pagination(False)
-            # Load all segments for small transcripts
-            try:
-                self.model.set_transcript(transcript)
-                self.table_view.resizeRowsToContents()
-                logger.info(f"Transcript loaded: {segment_count} segments")
-            except Exception as e:
-                logger.error(f"Error loading transcript: {e}", exc_info=True)
-                raise
-        
+            
+            # Store full transcript for pagination
+            self._full_transcript = transcript
+            self._current_page = 0
+            
+            # Calculate pages
+            self._total_pages = max(1, (segment_count + self.SEGMENTS_PER_PAGE - 1) // self.SEGMENTS_PER_PAGE)
+            logger.debug(f"Pagination calculated: {self._total_pages} total pages")
+            
+            # CRITICAL: For large transcripts, use pagination and simplified display
+            if segment_count > LARGE_TRANSCRIPT_THRESHOLD:
+                logger.info(f"Large transcript ({segment_count} > {LARGE_TRANSCRIPT_THRESHOLD}) - enabling pagination")
+                
+                try:
+                    self._enable_simple_mode()
+                    logger.debug("Simple display mode enabled")
+                    
+                    self._show_pagination(True)
+                    self._update_pagination_controls()
+                    logger.debug("Pagination controls shown")
+                    
+                    # Load first page only
+                    self._load_page(0)
+                    logger.info("First page loaded successfully")
+                except Exception as e:
+                    logger.error(f"Error initializing pagination: {e}", exc_info=True)
+                    raise
+            else:
+                logger.info("Small transcript - loading all segments normally")
+                try:
+                    self._disable_simple_mode()
+                    self._show_pagination(False)
+                    logger.debug("Simple mode disabled, pagination hidden")
+                    
+                    # Load all segments for small transcripts
+                    self.model.set_transcript(transcript)
+                    self.table_view.resizeRowsToContents()
+                    logger.info(f"Transcript loaded into model: {segment_count} segments")
+                except Exception as e:
+                    logger.error(f"Error loading transcript into model: {e}", exc_info=True)
+                    raise
+            
             self.segment_count_label.setText(f"{segment_count} segments total")
+            logger.info("load_transcript completed successfully")
+            
         except Exception as e:
             logger.error(f"CRITICAL ERROR in load_transcript: {e}", exc_info=True)
             # Re-raise to ensure main_window sees it too
