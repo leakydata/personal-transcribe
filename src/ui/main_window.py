@@ -1015,17 +1015,12 @@ class MainWindow(QMainWindow):
         try:
             logger.info(f"Loading transcript with {transcript.segment_count} segments...")
             
-            # Force garbage collection to clean up any lingering objects
-            gc.collect()
-            
-            # Process events before heavy UI work
-            QApplication.processEvents()
-            
             # Load transcript into editor
+            # NOTE: Removed direct gc.collect() and extra processEvents() to safely load
             self.transcript_editor.load_transcript(transcript)
             logger.debug("Transcript loaded into editor")
             
-            # Process events again
+            # Process events again ONLY after loading is done
             QApplication.processEvents()
             
             # Show gaps in audio player

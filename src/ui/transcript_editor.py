@@ -21,6 +21,9 @@ from PyQt6.QtGui import (
 )
 
 from src.models.transcript import Transcript, Segment, Word, format_timestamp_range
+from src.utils.logger import get_logger
+
+logger = get_logger("transcript_editor")
 
 
 # Confidence thresholds and colors
@@ -464,12 +467,9 @@ class TranscriptEditor(QWidget):
         For large transcripts (>100 segments), uses pagination and 
         simplified display mode to prevent crashes and improve performance.
         """
-        from src.utils.logger import get_logger
-        
-        logger = get_logger("transcript_editor")
-        
-        segment_count = len(transcript.segments)
-        logger.info(f"Loading transcript with {segment_count} segments")
+        try:
+            segment_count = len(transcript.segments)
+            logger.info(f"Loading transcript with {segment_count} segments")
         
         # Store full transcript for pagination
         self._full_transcript = transcript
@@ -498,7 +498,11 @@ class TranscriptEditor(QWidget):
                 logger.error(f"Error loading transcript: {e}", exc_info=True)
                 raise
         
-        self.segment_count_label.setText(f"{segment_count} segments total")
+            self.segment_count_label.setText(f"{segment_count} segments total")
+        except Exception as e:
+            logger.error(f"CRITICAL ERROR in load_transcript: {e}", exc_info=True)
+            # Re-raise to ensure main_window sees it too
+            raise
     
     def _enable_simple_mode(self):
         """Enable simplified display mode for large transcripts."""
@@ -563,9 +567,6 @@ class TranscriptEditor(QWidget):
     
     def _load_page(self, page: int):
         """Load a specific page of segments."""
-        from src.utils.logger import get_logger
-        logger = get_logger("transcript_editor")
-        
         if not self._full_transcript:
             return
         
